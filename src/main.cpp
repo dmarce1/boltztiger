@@ -44,18 +44,17 @@ const double Yp = (1 - hefrac / 2.0);
 double Hubble(double a) {
 	return H0 * h * std::sqrt(omega_r / (a * a * a * a) + omega_m / (a * a * a) + omega_lambda);
 }
-#define LMAX 5
+#define LMAX 4
 
-#define Ni 0
-#define Thetai LMAX
-#define ThetaPi 2*LMAX
-#define deltaci (3*LMAX)
-#define ubi (3*LMAX+1)
-#define deltabi (3*LMAX+2)
-#define uci (3*LMAX+3)
-#define Phii (3*LMAX+5)
-#define Psii (3*LMAX+6)
-#define NF (3*LMAX+7)
+#define Phii 0
+#define deltai 1
+#define ui 2
+#define deltabi 3
+#define ubi 4
+#define Ni 5
+#define Thetai (5+LMAX)
+#define ThetaPi (5+LMAX*2)
+#define NF (5+LMAX*3)
 using state = std::array<double,NF>;
 
 double compute_Nele(double eta, double beta);
@@ -422,11 +421,12 @@ void zero_order_universe(double amin, double amax, std::function<double(double)>
 	thomsonfunc = build_interpolation_function(thomson, amin, amax);
 }
 
-void advance(state &u, double k, double a0, double a1, std::function<double(double)> cs, std::function<double(double)> thomson) {
+void advance(state &U, double k, double a0, double a1, std::function<double(double)> cs, std::function<double(double)> thomson) {
 	const double logamin = std::log(a0);
 	const double logamax = std::log(a1);
 	double loga = logamin;
 	double eta = 1.0 / (a0 * Hubble(a0));
+	double cs2, etaaH, sigma;
 	while (loga < logamax) {
 		double a, H, Om, Or, eps, fb, fc, fgam, sigma, R, Onu, Ogam, fnu;
 		const auto compute_parameters = [&]() {
@@ -440,79 +440,102 @@ void advance(state &u, double k, double a0, double a1, std::function<double(doub
 			fnu = 1 - fgam;
 			fc = 1 - fb;
 			R = (3.0 * Om) / (4.0 * Or * fgam);
+			sigma = thomson(loga);
+			cs2 = std::pow(cs(loga), 2);
+			etaaH = eta * a * H;
 		};
 		compute_parameters();
-		const auto lam_max = eps + 4.5 * Om + 12 * Or + eps * eps + 3.0 + 12 * Or / (eps * eps);
-//		printf( "%e %e\n", lam_max - 12 * Or / (eps*eps), 12 * Or / (eps*eps));
-		const auto dloga = std::min(1.0 / lam_max, logamax - loga);
-		const auto mass = fc * u[deltaci] + fb * u[deltabi];
-		const auto rad = fnu * u[Ni] + fgam * u[Thetai];
-		const auto mmom = fc * u[uci] + fb * u[ubi];
-		const auto rmom = fnu * u[Ni + 1] + fgam * u[Thetai + 1];
-		const auto Phi = 1.5 / (eps * eps) * (4 * Or * (rad + rmom / eps) + Om * (mass + mmom / eps));
-		u[Psii] = -u[Phii] - 12 * Or * (fgam * u[Thetai + 2] + fnu * u[Ni + 2]) / (eps * eps);
-//		printf( "%e\n", -u[Psii]/ u[Phii]);
-		const auto compute_dudt_exp = [&](state u) {
-			state dudt;
-			const auto mass = fc * u[deltaci] + fb * u[deltabi];
-			const auto rad = fnu * u[Ni + 0] + fgam * (u[Thetai + 0]);
+		const auto lambda_max = std::max(std::max(1.0 + cs2 * eps, eps + 4.0 / etaaH), 0.5 * Om + 2.0 * Or);
+		const auto dloga = std::min(0.01 / lambda_max, logamax - loga);
 
-			dudt[Phii] = 0.5 * Om * mass + 2.0 * Or * rad - ((1.0 / 3.0) * eps * eps * u[Phii]) + u[Psii];
+		auto &Phi = U[Phii];
+		auto &delta = U[deltai];
+		auto &u = U[ui];
+		auto &deltab = U[deltabi];
+		auto &ub = U[ubi];
+		auto &Theta0 = U[Thetai + 0];
+		auto &Theta1 = U[Thetai + 1];
+		auto &Theta2 = U[Thetai + 2];
+		auto &Theta3 = U[Thetai + 3];
+		auto &ThetaP0 = U[ThetaPi + 0];
+		auto &ThetaP1 = U[ThetaPi + 1];
+		auto &ThetaP2 = U[ThetaPi + 2];
+		auto &ThetaP3 = U[ThetaPi + 3];
+		auto &N0 = U[Ni + 0];
+		auto &N1 = U[Ni + 1];
+		auto &N2 = U[Ni + 2];
+		auto &N3 = U[Ni + 3];
 
-			dudt[Thetai + 0] = -eps * u[Thetai + 1] - dudt[Phii];
-			dudt[Thetai + 1] = eps / 3.0 * (u[Thetai + 0] - 2.0 * u[Thetai + 2] + u[Psii]);
-
-			dudt[Ni + 0] = -eps * u[Ni + 1] - dudt[Phii];
-			dudt[Ni + 1] = eps / 3.0 * (u[Ni] - 2.0 * u[Ni + 2] + u[Psii]);
-
-			dudt[ThetaPi + 0] = -eps * u[ThetaPi + 1];
-			dudt[ThetaPi + 1] = eps / 3.0 * (u[ThetaPi + 0] - 2.0 * u[ThetaPi + 2]);
-
-			for (int l = 2; l < LMAX - 1; l++) {
-				dudt[Thetai + l] = eps / (2 * l + 1) * (l * u[Thetai + l - 1] - (l + 1) * u[Thetai + l + 1]);
-				dudt[ThetaPi + l] = eps / (2 * l + 1) * (l * u[ThetaPi + l - 1] - (l + 1) * u[ThetaPi + l + 1]);
-				dudt[Ni + l] = eps / (2 * l + 1) * (l * u[Ni + l - 1] - (l + 1) * u[Ni + l + 1]);
-			}
-			int l = LMAX - 1;
-			dudt[Thetai + l] = eps * u[Thetai + l - 1] - (l + 1) / (eta * a * H) * u[Thetai + l];
-			dudt[ThetaPi + l] = eps * u[ThetaPi + l - 1] - (l + 1) / (eta * a * H) * u[ThetaPi + l];
-			dudt[Ni + l] = eps * u[Ni + l - 1] - (l + 1) / (eta * a * H) * u[Ni + l];
-			dudt[deltaci] = -eps * u[uci] - 3 * dudt[Phii];
-			dudt[uci] = -u[uci] + eps * u[Psii];
-			dudt[deltabi] = -eps * u[ubi] - 3 * dudt[Phii];
-			dudt[ubi] = -u[ubi] + eps * u[Psii] + std::pow(cs(loga), 2) * u[deltabi];
-			return dudt;
-		};
-		state u0 = u;
-		auto dudt = compute_dudt_exp(u0);
-		for (int i = 0; i < NF; i++) {
-			u[i] = u0[i] + dudt[i] * dloga;
+		auto Phi0 = U[Phii];
+		auto delta0 = U[deltai];
+		auto u0 = U[ui];
+		auto deltab0 = U[deltabi];
+		auto ub0 = U[ubi];
+		auto Theta00 = U[Thetai + 0];
+		auto Theta10 = U[Thetai + 1];
+		auto Theta20 = U[Thetai + 2];
+		auto Theta30 = U[Thetai + 3];
+		auto ThetaP00 = U[ThetaPi + 0];
+		auto ThetaP10 = U[ThetaPi + 1];
+		auto ThetaP20 = U[ThetaPi + 2];
+		auto ThetaP30 = U[ThetaPi + 3];
+		auto N00 = U[Ni + 0];
+		auto N10 = U[Ni + 1];
+		auto N20 = U[Ni + 2];
+		auto N30 = U[Ni + 3];
+		const auto Psi = -12.0 * Or * (fgam * Theta2 + fnu * N2) / (eps * eps) - Phi;
+		printf("%10.2e ", a);
+		printf("%10.2e ", Psi);
+		for (int n = 0; n < NF; n++) {
+			printf("%10.2e ", U[n]);
 		}
+		printf("\n");
 
-		sigma = thomson(loga);
-		auto Theta10 = u[Thetai + 1];
-		auto ub0 = u[ubi];
-		auto Theta20 = u[Thetai + 2];
-		auto ThetaP00 = u[ThetaPi + 0];
-		auto ThetaP20 = u[ThetaPi + 2];
-		auto &Theta1 = u[Thetai + 1];
-		auto &ub = u[ubi];
-		auto &Theta2 = u[Thetai + 2];
-		auto &ThetaP0 = u[ThetaPi + 0];
-		auto &ThetaP2 = u[ThetaPi + 2];
-
-		Theta1 = (9 * dloga * sigma * Theta10 + 3 * R * (Theta10 + dloga * sigma * ub0)) / (3 * R + dloga * (9 + R) * sigma);
-		ub = (3 * dloga * sigma * Theta10 + R * (3 + dloga * sigma) * ub0) / (3 * R + dloga * (9 + R) * sigma);
-
+#define List(a0,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15,a16) a0; a1; a2; a3; a4; a5; a6; a7; a8; a9; a10; a11; a12; a13; a14; a15; a16
 #define Rule(a,b) a = b
-		Rule(Theta2, ((10 + 3 * dloga * sigma) * Theta20 + dloga * sigma * (ThetaP00 + ThetaP20)) / (2. * (1 + dloga * sigma) * (5 + dloga * sigma)));
-		Rule(ThetaP0, (10 * ThetaP00 + dloga * sigma * (5 * Theta20 + 7 * ThetaP00 + 5 * ThetaP20)) / (2. * (1 + dloga * sigma) * (5 + dloga * sigma)));
-		Rule(ThetaP2, (5 * ThetaP20 + dloga * sigma * (Theta20 + ThetaP00 + 2 * ThetaP20)) / ((1 + dloga * sigma) * (5 + dloga * sigma)));
 
-		for (int l = 3; l < LMAX; l++) {
-			u[Thetai + l] /= (1.0 + dloga * sigma);
-			u[ThetaPi + l] /= (1.0 + dloga * sigma);
-		}
+		List(Rule(Phi,Phi0), Rule(delta,delta0 - dloga*eps*u0), Rule(u,u0 - dloga*u0), Rule(deltab,deltab0 - dloga*eps*ub0),
+				Rule(ub,cs2*deltab0*dloga*eps + ub0 - dloga*ub0), Rule(Theta0,Theta00 - dloga*eps*Theta10),
+				Rule(Theta1,Theta10 + (dloga*eps*(Theta00 - 2*Theta20))/3.), Rule(Theta2,Theta20 + (dloga*eps*(2*Theta10 - 3*Theta30))/5.),
+				Rule(Theta3,dloga*eps*Theta20 + Theta30 - (4*dloga*Theta30)/etaaH), Rule(ThetaP0,ThetaP00 - dloga*eps*ThetaP10),
+				Rule(ThetaP1,ThetaP10 + (dloga*eps*(ThetaP00 - 2*ThetaP20))/3.), Rule(ThetaP2,ThetaP20 + (dloga*eps*(2*ThetaP10 - 3*ThetaP30))/5.),
+				Rule(ThetaP3,dloga*eps*ThetaP20 + ThetaP30 - (4*dloga*ThetaP30)/etaaH), Rule(N0,N00 - dloga*eps*N10),
+				Rule(N1,N10 + (dloga*eps*(N00 - 2*N20))/3.), Rule(N2,N20 + (dloga*eps*(2*N10 - 3*N30))/5.), Rule(N3,dloga*eps*N20 + N30 - (4*dloga*N30)/etaaH));
+		Phi0 = U[Phii];
+		delta0 = U[deltai];
+		u0 = U[ui];
+		deltab0 = U[deltabi];
+		ub0 = U[ubi];
+		Theta00 = U[Thetai + 0];
+		Theta10 = U[Thetai + 1];
+		Theta20 = U[Thetai + 2];
+		Theta30 = U[Thetai + 3];
+		ThetaP00 = U[ThetaPi + 0];
+		ThetaP10 = U[ThetaPi + 1];
+		ThetaP20 = U[ThetaPi + 2];
+		ThetaP30 = U[ThetaPi + 3];
+		N00 = U[Ni + 0];
+		N10 = U[Ni + 1];
+		N20 = U[Ni + 2];
+		N30 = U[Ni + 3];
+
+		List(
+				Rule(Phi,(20*dloga*Power(eps,2)*fnu*N00*Or - 120*dloga*fnu*N20*Or + 10*Power(eps,2)*Phi0 + 15*dloga*Power(eps,2)*fb*Om*Phi0 + 15*dloga*Power(eps,2)*fc*Om*Phi0 + 20*dloga*Power(eps,2)*fgam*Or*Phi0 + 20*dloga*Power(eps,2)*fnu*Or*Phi0 + 24*Power(dloga,2)*Power(eps,2)*fnu*N00*Or*sigma - 144*Power(dloga,2)*fnu*N20*Or*sigma + 12*dloga*Power(eps,2)*Phi0*sigma + 18*Power(dloga,2)*Power(eps,2)*fb*Om*Phi0*sigma + 18*Power(dloga,2)*Power(eps,2)*fc*Om*Phi0*sigma + 24*Power(dloga,2)*Power(eps,2)*fgam*Or*Phi0*sigma + 24*Power(dloga,2)*Power(eps,2)*fnu*Or*Phi0*sigma + 4*Power(dloga,3)*Power(eps,2)*fnu*N00*Or*Power(sigma,2) - 24*Power(dloga,3)*fnu*N20*Or*Power(sigma,2) + 2*Power(dloga,2)*Power(eps,2)*Phi0*Power(sigma,2) + 3*Power(dloga,3)*Power(eps,2)*fb*Om*Phi0*Power(sigma,2) + 3*Power(dloga,3)*Power(eps,2)*fc*Om*Phi0*Power(sigma,2) + 4*Power(dloga,3)*Power(eps,2)*fgam*Or*Phi0*Power(sigma,2) + 4*Power(dloga,3)*Power(eps,2)*fnu*Or*Phi0*Power(sigma,2) + deltab0*dloga*Power(eps,2)*fb*Om*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + delta0*dloga*Power(eps,2)*fc*Om*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + 20*dloga*Power(eps,2)*fgam*Or*Theta00 + 24*Power(dloga,2)*Power(eps,2)*fgam*Or*sigma*Theta00 + 4*Power(dloga,3)*Power(eps,2)*fgam*Or*Power(sigma,2)*Theta00 - 120*dloga*fgam*Or*Theta20 - 36*Power(dloga,2)*fgam*Or*sigma*Theta20 - 12*Power(dloga,2)*fgam*Or*sigma*ThetaP00 - 12*Power(dloga,2)*fgam*Or*sigma*ThetaP20)/ (Power(eps,2)*(2 + dloga*(2 + 2*Power(eps,2) + 3*fb*Om + 3*fc*Om + 4*fgam*Or + 4*fnu*Or))*(1 + dloga*sigma)*(5 + dloga*sigma))),
+				Rule(delta,(delta0*Power(eps,2)*(2 + dloga*(2 + 2*Power(eps,2) + 3*fb*Om + 4*fgam*Or + 4*fnu*Or))*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + 3*dloga*(-(deltab0*Power(eps,2)*fb*Om*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2))) + 2*Power(eps,4)*Phi0*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) - 2*Power(eps,2)*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2))*(2*fnu*N00*Or - Phi0 + 2*fgam*Or*Theta00) + 12*Or*(2*fnu*N20*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + fgam*(10 + 3*dloga*sigma)*Theta20 + dloga*fgam*sigma*(ThetaP00 + ThetaP20))))/ (Power(eps,2)*(2 + dloga*(2 + 2*Power(eps,2) + 3*fb*Om + 3*fc*Om + 4*fgam*Or + 4*fnu*Or))*(1 + dloga*sigma)*(5 + dloga*sigma))),
+				Rule(u,-((20*Power(dloga,2)*Power(eps,2)*fnu*N00*Or + 120*dloga*fnu*N20*Or + 120*Power(dloga,2)*Power(eps,2)*fnu*N20*Or + 180*Power(dloga,2)*fb*fnu*N20*Om*Or + 180*Power(dloga,2)*fc*fnu*N20*Om*Or + 240*Power(dloga,2)*fgam*fnu*N20*Power(Or,2) + 240*Power(dloga,2)*Power(fnu,2)*N20*Power(Or,2) + 10*dloga*Power(eps,2)*Phi0 + 15*Power(dloga,2)*Power(eps,2)*fb*Om*Phi0 + 15*Power(dloga,2)*Power(eps,2)*fc*Om*Phi0 + 20*Power(dloga,2)*Power(eps,2)*fgam*Or*Phi0 + 20*Power(dloga,2)*Power(eps,2)*fnu*Or*Phi0 + 24*Power(dloga,3)*Power(eps,2)*fnu*N00*Or*sigma + 144*Power(dloga,2)*fnu*N20*Or*sigma + 144*Power(dloga,3)*Power(eps,2)*fnu*N20*Or*sigma + 216*Power(dloga,3)*fb*fnu*N20*Om*Or*sigma + 216*Power(dloga,3)*fc*fnu*N20*Om*Or*sigma + 288*Power(dloga,3)*fgam*fnu*N20*Power(Or,2)*sigma + 288*Power(dloga,3)*Power(fnu,2)*N20*Power(Or,2)*sigma + 12*Power(dloga,2)*Power(eps,2)*Phi0*sigma + 18*Power(dloga,3)*Power(eps,2)*fb*Om*Phi0*sigma + 18*Power(dloga,3)*Power(eps,2)*fc*Om*Phi0*sigma + 24*Power(dloga,3)*Power(eps,2)*fgam*Or*Phi0*sigma + 24*Power(dloga,3)*Power(eps,2)*fnu*Or*Phi0*sigma + 4*Power(dloga,4)*Power(eps,2)*fnu*N00*Or*Power(sigma,2) + 24*Power(dloga,3)*fnu*N20*Or*Power(sigma,2) + 24*Power(dloga,4)*Power(eps,2)*fnu*N20*Or*Power(sigma,2) + 36*Power(dloga,4)*fb*fnu*N20*Om*Or*Power(sigma,2) + 36*Power(dloga,4)*fc*fnu*N20*Om*Or*Power(sigma,2) + 48*Power(dloga,4)*fgam*fnu*N20*Power(Or,2)*Power(sigma,2) + 48*Power(dloga,4)*Power(fnu,2)*N20*Power(Or,2)*Power(sigma,2) + 2*Power(dloga,3)*Power(eps,2)*Phi0*Power(sigma,2) + 3*Power(dloga,4)*Power(eps,2)*fb*Om*Phi0*Power(sigma,2) + 3*Power(dloga,4)*Power(eps,2)*fc*Om*Phi0*Power(sigma,2) + 4*Power(dloga,4)*Power(eps,2)*fgam*Or*Phi0*Power(sigma,2) + 4*Power(dloga,4)*Power(eps,2)*fnu*Or*Phi0*Power(sigma,2) + deltab0*Power(dloga,2)*Power(eps,2)*fb*Om*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + delta0*Power(dloga,2)*Power(eps,2)*fc*Om*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + 20*Power(dloga,2)*Power(eps,2)*fgam*Or*Theta00 + 24*Power(dloga,3)*Power(eps,2)*fgam*Or*sigma*Theta00 + 4*Power(dloga,4)*Power(eps,2)*fgam*Or*Power(sigma,2)*Theta00 + 120*dloga*fgam*Or*Theta20 + 120*Power(dloga,2)*Power(eps,2)*fgam*Or*Theta20 + 180*Power(dloga,2)*fb*fgam*Om*Or*Theta20 + 180*Power(dloga,2)*fc*fgam*Om*Or*Theta20 + 240*Power(dloga,2)*Power(fgam,2)*Power(Or,2)*Theta20 + 240*Power(dloga,2)*fgam*fnu*Power(Or,2)*Theta20 + 36*Power(dloga,2)*fgam*Or*sigma*Theta20 + 36*Power(dloga,3)*Power(eps,2)*fgam*Or*sigma*Theta20 + 54*Power(dloga,3)*fb*fgam*Om*Or*sigma*Theta20 + 54*Power(dloga,3)*fc*fgam*Om*Or*sigma*Theta20 + 72*Power(dloga,3)*Power(fgam,2)*Power(Or,2)*sigma*Theta20 + 72*Power(dloga,3)*fgam*fnu*Power(Or,2)*sigma*Theta20 + 12*Power(dloga,2)*fgam*Or*sigma*ThetaP00 + 12*Power(dloga,3)*Power(eps,2)*fgam*Or*sigma*ThetaP00 + 18*Power(dloga,3)*fb*fgam*Om*Or*sigma*ThetaP00 + 18*Power(dloga,3)*fc*fgam*Om*Or*sigma*ThetaP00 + 24*Power(dloga,3)*Power(fgam,2)*Power(Or,2)*sigma*ThetaP00 + 24*Power(dloga,3)*fgam*fnu*Power(Or,2)*sigma*ThetaP00 + 12*Power(dloga,2)*fgam*Or*sigma*ThetaP20 + 12*Power(dloga,3)*Power(eps,2)*fgam*Or*sigma*ThetaP20 + 18*Power(dloga,3)*fb*fgam*Om*Or*sigma*ThetaP20 + 18*Power(dloga,3)*fc*fgam*Om*Or*sigma*ThetaP20 + 24*Power(dloga,3)*Power(fgam,2)*Power(Or,2)*sigma*ThetaP20 + 24*Power(dloga,3)*fgam*fnu*Power(Or,2)*sigma*ThetaP20 - 10*eps*u0 - 10*dloga*eps*u0 - 10*dloga*Power(eps,3)*u0 - 15*dloga*eps*fb*Om*u0 - 15*dloga*eps*fc*Om*u0 - 20*dloga*eps*fgam*Or*u0 - 20*dloga*eps*fnu*Or*u0 - 12*dloga*eps*sigma*u0 - 12*Power(dloga,2)*eps*sigma*u0 - 12*Power(dloga,2)*Power(eps,3)*sigma*u0 - 18*Power(dloga,2)*eps*fb*Om*sigma*u0 - 18*Power(dloga,2)*eps*fc*Om*sigma*u0 - 24*Power(dloga,2)*eps*fgam*Or*sigma*u0 - 24*Power(dloga,2)*eps*fnu*Or*sigma*u0 - 2*Power(dloga,2)*eps*Power(sigma,2)*u0 - 2*Power(dloga,3)*eps*Power(sigma,2)*u0 - 2*Power(dloga,3)*Power(eps,3)*Power(sigma,2)*u0 - 3*Power(dloga,3)*eps*fb*Om*Power(sigma,2)*u0 - 3*Power(dloga,3)*eps*fc*Om*Power(sigma,2)*u0 - 4*Power(dloga,3)*eps*fgam*Or*Power(sigma,2)*u0 - 4*Power(dloga,3)*eps*fnu*Or*Power(sigma,2)*u0)/ (eps*(2 + dloga*(2 + 2*Power(eps,2) + 3*fb*Om + 3*fc*Om + 4*fgam*Or + 4*fnu*Or))*(1 + dloga*sigma)*(5 + dloga*sigma)))),
+				Rule(deltab,(deltab0*Power(eps,2)*(2 + dloga*(2 + 2*Power(eps,2) + 3*fc*Om + 4*fgam*Or + 4*fnu*Or))*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + 3*dloga*(-(delta0*Power(eps,2)*fc*Om*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2))) + 2*Power(eps,4)*Phi0*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) - 2*Power(eps,2)*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2))*(2*fnu*N00*Or - Phi0 + 2*fgam*Or*Theta00) + 12*Or*(2*fnu*N20*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + fgam*(10 + 3*dloga*sigma)*Theta20 + dloga*fgam*sigma*(ThetaP00 + ThetaP20))))/ (Power(eps,2)*(2 + dloga*(2 + 2*Power(eps,2) + 3*fb*Om + 3*fc*Om + 4*fgam*Or + 4*fnu*Or))*(1 + dloga*sigma)*(5 + dloga*sigma))),
+				Rule(ub,-((20*Power(dloga,2)*Power(eps,2)*fnu*N00*Or*R + 120*dloga*fnu*N20*Or*R + 120*Power(dloga,2)*Power(eps,2)*fnu*N20*Or*R + 180*Power(dloga,2)*fb*fnu*N20*Om*Or*R + 180*Power(dloga,2)*fc*fnu*N20*Om*Or*R + 240*Power(dloga,2)*fgam*fnu*N20*Power(Or,2)*R + 240*Power(dloga,2)*Power(fnu,2)*N20*Power(Or,2)*R + 10*dloga*Power(eps,2)*Phi0*R + 15*Power(dloga,2)*Power(eps,2)*fb*Om*Phi0*R + 15*Power(dloga,2)*Power(eps,2)*fc*Om*Phi0*R + 20*Power(dloga,2)*Power(eps,2)*fgam*Or*Phi0*R + 20*Power(dloga,2)*Power(eps,2)*fnu*Or*Phi0*R + 20*Power(dloga,3)*Power(eps,2)*fnu*N00*Or*sigma + 120*Power(dloga,2)*fnu*N20*Or*sigma + 120*Power(dloga,3)*Power(eps,2)*fnu*N20*Or*sigma + 180*Power(dloga,3)*fb*fnu*N20*Om*Or*sigma + 180*Power(dloga,3)*fc*fnu*N20*Om*Or*sigma + 240*Power(dloga,3)*fgam*fnu*N20*Power(Or,2)*sigma + 240*Power(dloga,3)*Power(fnu,2)*N20*Power(Or,2)*sigma + 10*Power(dloga,2)*Power(eps,2)*Phi0*sigma + 15*Power(dloga,3)*Power(eps,2)*fb*Om*Phi0*sigma + 15*Power(dloga,3)*Power(eps,2)*fc*Om*Phi0*sigma + 20*Power(dloga,3)*Power(eps,2)*fgam*Or*Phi0*sigma + 20*Power(dloga,3)*Power(eps,2)*fnu*Or*Phi0*sigma + 44*Power(dloga,3)*Power(eps,2)*fnu*N00*Or*R*sigma + 264*Power(dloga,2)*fnu*N20*Or*R*sigma + 264*Power(dloga,3)*Power(eps,2)*fnu*N20*Or*R*sigma + 396*Power(dloga,3)*fb*fnu*N20*Om*Or*R*sigma + 396*Power(dloga,3)*fc*fnu*N20*Om*Or*R*sigma + 528*Power(dloga,3)*fgam*fnu*N20*Power(Or,2)*R*sigma + 528*Power(dloga,3)*Power(fnu,2)*N20*Power(Or,2)*R*sigma + 22*Power(dloga,2)*Power(eps,2)*Phi0*R*sigma + 33*Power(dloga,3)*Power(eps,2)*fb*Om*Phi0*R*sigma + 33*Power(dloga,3)*Power(eps,2)*fc*Om*Phi0*R*sigma + 44*Power(dloga,3)*Power(eps,2)*fgam*Or*Phi0*R*sigma + 44*Power(dloga,3)*Power(eps,2)*fnu*Or*Phi0*R*sigma + 24*Power(dloga,4)*Power(eps,2)*fnu*N00*Or*Power(sigma,2) + 144*Power(dloga,3)*fnu*N20*Or*Power(sigma,2) + 144*Power(dloga,4)*Power(eps,2)*fnu*N20*Or*Power(sigma,2) + 216*Power(dloga,4)*fb*fnu*N20*Om*Or*Power(sigma,2) + 216*Power(dloga,4)*fc*fnu*N20*Om*Or*Power(sigma,2) + 288*Power(dloga,4)*fgam*fnu*N20*Power(Or,2)*Power(sigma,2) + 288*Power(dloga,4)*Power(fnu,2)*N20*Power(Or,2)*Power(sigma,2) + 12*Power(dloga,3)*Power(eps,2)*Phi0*Power(sigma,2) + 18*Power(dloga,4)*Power(eps,2)*fb*Om*Phi0*Power(sigma,2) + 18*Power(dloga,4)*Power(eps,2)*fc*Om*Phi0*Power(sigma,2) + 24*Power(dloga,4)*Power(eps,2)*fgam*Or*Phi0*Power(sigma,2) + 24*Power(dloga,4)*Power(eps,2)*fnu*Or*Phi0*Power(sigma,2) + 28*Power(dloga,4)*Power(eps,2)*fnu*N00*Or*R*Power(sigma,2) + 168*Power(dloga,3)*fnu*N20*Or*R*Power(sigma,2) + 168*Power(dloga,4)*Power(eps,2)*fnu*N20*Or*R*Power(sigma,2) + 252*Power(dloga,4)*fb*fnu*N20*Om*Or*R*Power(sigma,2) + 252*Power(dloga,4)*fc*fnu*N20*Om*Or*R*Power(sigma,2) + 336*Power(dloga,4)*fgam*fnu*N20*Power(Or,2)*R*Power(sigma,2) + 336*Power(dloga,4)*Power(fnu,2)*N20*Power(Or,2)*R*Power(sigma,2) + 14*Power(dloga,3)*Power(eps,2)*Phi0*R*Power(sigma,2) + 21*Power(dloga,4)*Power(eps,2)*fb*Om*Phi0*R*Power(sigma,2) + 21*Power(dloga,4)*Power(eps,2)*fc*Om*Phi0*R*Power(sigma,2) + 28*Power(dloga,4)*Power(eps,2)*fgam*Or*Phi0*R*Power(sigma,2) + 28*Power(dloga,4)*Power(eps,2)*fnu*Or*Phi0*R*Power(sigma,2) + 4*Power(dloga,5)*Power(eps,2)*fnu*N00*Or*Power(sigma,3) + 24*Power(dloga,4)*fnu*N20*Or*Power(sigma,3) + 24*Power(dloga,5)*Power(eps,2)*fnu*N20*Or*Power(sigma,3) + 36*Power(dloga,5)*fb*fnu*N20*Om*Or*Power(sigma,3) + 36*Power(dloga,5)*fc*fnu*N20*Om*Or*Power(sigma,3) + 48*Power(dloga,5)*fgam*fnu*N20*Power(Or,2)*Power(sigma,3) + 48*Power(dloga,5)*Power(fnu,2)*N20*Power(Or,2)*Power(sigma,3) + 2*Power(dloga,4)*Power(eps,2)*Phi0*Power(sigma,3) + 3*Power(dloga,5)*Power(eps,2)*fb*Om*Phi0*Power(sigma,3) + 3*Power(dloga,5)*Power(eps,2)*fc*Om*Phi0*Power(sigma,3) + 4*Power(dloga,5)*Power(eps,2)*fgam*Or*Phi0*Power(sigma,3) + 4*Power(dloga,5)*Power(eps,2)*fnu*Or*Phi0*Power(sigma,3) + 4*Power(dloga,5)*Power(eps,2)*fnu*N00*Or*R*Power(sigma,3) + 24*Power(dloga,4)*fnu*N20*Or*R*Power(sigma,3) + 24*Power(dloga,5)*Power(eps,2)*fnu*N20*Or*R*Power(sigma,3) + 36*Power(dloga,5)*fb*fnu*N20*Om*Or*R*Power(sigma,3) + 36*Power(dloga,5)*fc*fnu*N20*Om*Or*R*Power(sigma,3) + 48*Power(dloga,5)*fgam*fnu*N20*Power(Or,2)*R*Power(sigma,3) + 48*Power(dloga,5)*Power(fnu,2)*N20*Power(Or,2)*R*Power(sigma,3) + 2*Power(dloga,4)*Power(eps,2)*Phi0*R*Power(sigma,3) + 3*Power(dloga,5)*Power(eps,2)*fb*Om*Phi0*R*Power(sigma,3) + 3*Power(dloga,5)*Power(eps,2)*fc*Om*Phi0*R*Power(sigma,3) + 4*Power(dloga,5)*Power(eps,2)*fgam*Or*Phi0*R*Power(sigma,3) + 4*Power(dloga,5)*Power(eps,2)*fnu*Or*Phi0*R*Power(sigma,3) + deltab0*Power(dloga,2)*Power(eps,2)*fb*Om*(R + dloga*sigma + dloga*R*sigma)*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + delta0*Power(dloga,2)*Power(eps,2)*fc*Om*(R + dloga*sigma + dloga*R*sigma)*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + 20*Power(dloga,2)*Power(eps,2)*fgam*Or*R*Theta00 + 20*Power(dloga,3)*Power(eps,2)*fgam*Or*sigma*Theta00 + 44*Power(dloga,3)*Power(eps,2)*fgam*Or*R*sigma*Theta00 + 24*Power(dloga,4)*Power(eps,2)*fgam*Or*Power(sigma,2)*Theta00 + 28*Power(dloga,4)*Power(eps,2)*fgam*Or*R*Power(sigma,2)*Theta00 + 4*Power(dloga,5)*Power(eps,2)*fgam*Or*Power(sigma,3)*Theta00 + 4*Power(dloga,5)*Power(eps,2)*fgam*Or*R*Power(sigma,3)*Theta00 - 30*dloga*eps*sigma*Theta10 - 30*Power(dloga,2)*eps*sigma*Theta10 - 30*Power(dloga,2)*Power(eps,3)*sigma*Theta10 - 45*Power(dloga,2)*eps*fb*Om*sigma*Theta10 - 45*Power(dloga,2)*eps*fc*Om*sigma*Theta10 - 60*Power(dloga,2)*eps*fgam*Or*sigma*Theta10 - 60*Power(dloga,2)*eps*fnu*Or*sigma*Theta10 - 36*Power(dloga,2)*eps*Power(sigma,2)*Theta10 - 36*Power(dloga,3)*eps*Power(sigma,2)*Theta10 - 36*Power(dloga,3)*Power(eps,3)*Power(sigma,2)*Theta10 - 54*Power(dloga,3)*eps*fb*Om*Power(sigma,2)*Theta10 - 54*Power(dloga,3)*eps*fc*Om*Power(sigma,2)*Theta10 - 72*Power(dloga,3)*eps*fgam*Or*Power(sigma,2)*Theta10 - 72*Power(dloga,3)*eps*fnu*Or*Power(sigma,2)*Theta10 - 6*Power(dloga,3)*eps*Power(sigma,3)*Theta10 - 6*Power(dloga,4)*eps*Power(sigma,3)*Theta10 - 6*Power(dloga,4)*Power(eps,3)*Power(sigma,3)*Theta10 - 9*Power(dloga,4)*eps*fb*Om*Power(sigma,3)*Theta10 - 9*Power(dloga,4)*eps*fc*Om*Power(sigma,3)*Theta10 - 12*Power(dloga,4)*eps*fgam*Or*Power(sigma,3)*Theta10 - 12*Power(dloga,4)*eps*fnu*Or*Power(sigma,3)*Theta10 + 120*dloga*fgam*Or*R*Theta20 + 120*Power(dloga,2)*Power(eps,2)*fgam*Or*R*Theta20 + 180*Power(dloga,2)*fb*fgam*Om*Or*R*Theta20 + 180*Power(dloga,2)*fc*fgam*Om*Or*R*Theta20 + 240*Power(dloga,2)*Power(fgam,2)*Power(Or,2)*R*Theta20 + 240*Power(dloga,2)*fgam*fnu*Power(Or,2)*R*Theta20 + 120*Power(dloga,2)*fgam*Or*sigma*Theta20 + 120*Power(dloga,3)*Power(eps,2)*fgam*Or*sigma*Theta20 + 180*Power(dloga,3)*fb*fgam*Om*Or*sigma*Theta20 + 180*Power(dloga,3)*fc*fgam*Om*Or*sigma*Theta20 + 240*Power(dloga,3)*Power(fgam,2)*Power(Or,2)*sigma*Theta20 + 240*Power(dloga,3)*fgam*fnu*Power(Or,2)*sigma*Theta20 + 156*Power(dloga,2)*fgam*Or*R*sigma*Theta20 + 156*Power(dloga,3)*Power(eps,2)*fgam*Or*R*sigma*Theta20 + 234*Power(dloga,3)*fb*fgam*Om*Or*R*sigma*Theta20 + 234*Power(dloga,3)*fc*fgam*Om*Or*R*sigma*Theta20 + 312*Power(dloga,3)*Power(fgam,2)*Power(Or,2)*R*sigma*Theta20 + 312*Power(dloga,3)*fgam*fnu*Power(Or,2)*R*sigma*Theta20 + 36*Power(dloga,3)*fgam*Or*Power(sigma,2)*Theta20 + 36*Power(dloga,4)*Power(eps,2)*fgam*Or*Power(sigma,2)*Theta20 + 54*Power(dloga,4)*fb*fgam*Om*Or*Power(sigma,2)*Theta20 + 54*Power(dloga,4)*fc*fgam*Om*Or*Power(sigma,2)*Theta20 + 72*Power(dloga,4)*Power(fgam,2)*Power(Or,2)*Power(sigma,2)*Theta20 + 72*Power(dloga,4)*fgam*fnu*Power(Or,2)*Power(sigma,2)*Theta20 + 36*Power(dloga,3)*fgam*Or*R*Power(sigma,2)*Theta20 + 36*Power(dloga,4)*Power(eps,2)*fgam*Or*R*Power(sigma,2)*Theta20 + 54*Power(dloga,4)*fb*fgam*Om*Or*R*Power(sigma,2)*Theta20 + 54*Power(dloga,4)*fc*fgam*Om*Or*R*Power(sigma,2)*Theta20 + 72*Power(dloga,4)*Power(fgam,2)*Power(Or,2)*R*Power(sigma,2)*Theta20 + 72*Power(dloga,4)*fgam*fnu*Power(Or,2)*R*Power(sigma,2)*Theta20 + 12*Power(dloga,2)*fgam*Or*R*sigma*ThetaP00 + 12*Power(dloga,3)*Power(eps,2)*fgam*Or*R*sigma*ThetaP00 + 18*Power(dloga,3)*fb*fgam*Om*Or*R*sigma*ThetaP00 + 18*Power(dloga,3)*fc*fgam*Om*Or*R*sigma*ThetaP00 + 24*Power(dloga,3)*Power(fgam,2)*Power(Or,2)*R*sigma*ThetaP00 + 24*Power(dloga,3)*fgam*fnu*Power(Or,2)*R*sigma*ThetaP00 + 12*Power(dloga,3)*fgam*Or*Power(sigma,2)*ThetaP00 + 12*Power(dloga,4)*Power(eps,2)*fgam*Or*Power(sigma,2)*ThetaP00 + 18*Power(dloga,4)*fb*fgam*Om*Or*Power(sigma,2)*ThetaP00 + 18*Power(dloga,4)*fc*fgam*Om*Or*Power(sigma,2)*ThetaP00 + 24*Power(dloga,4)*Power(fgam,2)*Power(Or,2)*Power(sigma,2)*ThetaP00 + 24*Power(dloga,4)*fgam*fnu*Power(Or,2)*Power(sigma,2)*ThetaP00 + 12*Power(dloga,3)*fgam*Or*R*Power(sigma,2)*ThetaP00 + 12*Power(dloga,4)*Power(eps,2)*fgam*Or*R*Power(sigma,2)*ThetaP00 + 18*Power(dloga,4)*fb*fgam*Om*Or*R*Power(sigma,2)*ThetaP00 + 18*Power(dloga,4)*fc*fgam*Om*Or*R*Power(sigma,2)*ThetaP00 + 24*Power(dloga,4)*Power(fgam,2)*Power(Or,2)*R*Power(sigma,2)*ThetaP00 + 24*Power(dloga,4)*fgam*fnu*Power(Or,2)*R*Power(sigma,2)*ThetaP00 + 12*Power(dloga,2)*fgam*Or*R*sigma*ThetaP20 + 12*Power(dloga,3)*Power(eps,2)*fgam*Or*R*sigma*ThetaP20 + 18*Power(dloga,3)*fb*fgam*Om*Or*R*sigma*ThetaP20 + 18*Power(dloga,3)*fc*fgam*Om*Or*R*sigma*ThetaP20 + 24*Power(dloga,3)*Power(fgam,2)*Power(Or,2)*R*sigma*ThetaP20 + 24*Power(dloga,3)*fgam*fnu*Power(Or,2)*R*sigma*ThetaP20 + 12*Power(dloga,3)*fgam*Or*Power(sigma,2)*ThetaP20 + 12*Power(dloga,4)*Power(eps,2)*fgam*Or*Power(sigma,2)*ThetaP20 + 18*Power(dloga,4)*fb*fgam*Om*Or*Power(sigma,2)*ThetaP20 + 18*Power(dloga,4)*fc*fgam*Om*Or*Power(sigma,2)*ThetaP20 + 24*Power(dloga,4)*Power(fgam,2)*Power(Or,2)*Power(sigma,2)*ThetaP20 + 24*Power(dloga,4)*fgam*fnu*Power(Or,2)*Power(sigma,2)*ThetaP20 + 12*Power(dloga,3)*fgam*Or*R*Power(sigma,2)*ThetaP20 + 12*Power(dloga,4)*Power(eps,2)*fgam*Or*R*Power(sigma,2)*ThetaP20 + 18*Power(dloga,4)*fb*fgam*Om*Or*R*Power(sigma,2)*ThetaP20 + 18*Power(dloga,4)*fc*fgam*Om*Or*R*Power(sigma,2)*ThetaP20 + 24*Power(dloga,4)*Power(fgam,2)*Power(Or,2)*R*Power(sigma,2)*ThetaP20 + 24*Power(dloga,4)*fgam*fnu*Power(Or,2)*R*Power(sigma,2)*ThetaP20 - 10*eps*R*ub0 - 10*dloga*eps*R*ub0 - 10*dloga*Power(eps,3)*R*ub0 - 15*dloga*eps*fb*Om*R*ub0 - 15*dloga*eps*fc*Om*R*ub0 - 20*dloga*eps*fgam*Or*R*ub0 - 20*dloga*eps*fnu*Or*R*ub0 - 22*dloga*eps*R*sigma*ub0 - 22*Power(dloga,2)*eps*R*sigma*ub0 - 22*Power(dloga,2)*Power(eps,3)*R*sigma*ub0 - 33*Power(dloga,2)*eps*fb*Om*R*sigma*ub0 - 33*Power(dloga,2)*eps*fc*Om*R*sigma*ub0 - 44*Power(dloga,2)*eps*fgam*Or*R*sigma*ub0 - 44*Power(dloga,2)*eps*fnu*Or*R*sigma*ub0 - 14*Power(dloga,2)*eps*R*Power(sigma,2)*ub0 - 14*Power(dloga,3)*eps*R*Power(sigma,2)*ub0 - 14*Power(dloga,3)*Power(eps,3)*R*Power(sigma,2)*ub0 - 21*Power(dloga,3)*eps*fb*Om*R*Power(sigma,2)*ub0 - 21*Power(dloga,3)*eps*fc*Om*R*Power(sigma,2)*ub0 - 28*Power(dloga,3)*eps*fgam*Or*R*Power(sigma,2)*ub0 - 28*Power(dloga,3)*eps*fnu*Or*R*Power(sigma,2)*ub0 - 2*Power(dloga,3)*eps*R*Power(sigma,3)*ub0 - 2*Power(dloga,4)*eps*R*Power(sigma,3)*ub0 - 2*Power(dloga,4)*Power(eps,3)*R*Power(sigma,3)*ub0 - 3*Power(dloga,4)*eps*fb*Om*R*Power(sigma,3)*ub0 - 3*Power(dloga,4)*eps*fc*Om*R*Power(sigma,3)*ub0 - 4*Power(dloga,4)*eps*fgam*Or*R*Power(sigma,3)*ub0 - 4*Power(dloga,4)*eps*fnu*Or*R*Power(sigma,3)*ub0)/ (eps*(2 + dloga*(2 + 2*Power(eps,2) + 3*fb*Om + 3*fc*Om + 4*fgam*Or + 4*fnu*Or))*(1 + dloga*sigma)*(5 + dloga*sigma)*(R + dloga*sigma + dloga*R*sigma)))),
+				Rule(Theta0,(-20*dloga*Power(eps,2)*fnu*N00*Or + 120*dloga*fnu*N20*Or + 10*dloga*Power(eps,2)*Phi0 + 10*dloga*Power(eps,4)*Phi0 - 24*Power(dloga,2)*Power(eps,2)*fnu*N00*Or*sigma + 144*Power(dloga,2)*fnu*N20*Or*sigma + 12*Power(dloga,2)*Power(eps,2)*Phi0*sigma + 12*Power(dloga,2)*Power(eps,4)*Phi0*sigma - 4*Power(dloga,3)*Power(eps,2)*fnu*N00*Or*Power(sigma,2) + 24*Power(dloga,3)*fnu*N20*Or*Power(sigma,2) + 2*Power(dloga,3)*Power(eps,2)*Phi0*Power(sigma,2) + 2*Power(dloga,3)*Power(eps,4)*Phi0*Power(sigma,2) - deltab0*dloga*Power(eps,2)*fb*Om*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) - delta0*dloga*Power(eps,2)*fc*Om*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + 10*Power(eps,2)*Theta00 + 10*dloga*Power(eps,2)*Theta00 + 10*dloga*Power(eps,4)*Theta00 + 15*dloga*Power(eps,2)*fb*Om*Theta00 + 15*dloga*Power(eps,2)*fc*Om*Theta00 + 20*dloga*Power(eps,2)*fnu*Or*Theta00 + 12*dloga*Power(eps,2)*sigma*Theta00 + 12*Power(dloga,2)*Power(eps,2)*sigma*Theta00 + 12*Power(dloga,2)*Power(eps,4)*sigma*Theta00 + 18*Power(dloga,2)*Power(eps,2)*fb*Om*sigma*Theta00 + 18*Power(dloga,2)*Power(eps,2)*fc*Om*sigma*Theta00 + 24*Power(dloga,2)*Power(eps,2)*fnu*Or*sigma*Theta00 + 2*Power(dloga,2)*Power(eps,2)*Power(sigma,2)*Theta00 + 2*Power(dloga,3)*Power(eps,2)*Power(sigma,2)*Theta00 + 2*Power(dloga,3)*Power(eps,4)*Power(sigma,2)*Theta00 + 3*Power(dloga,3)*Power(eps,2)*fb*Om*Power(sigma,2)*Theta00 + 3*Power(dloga,3)*Power(eps,2)*fc*Om*Power(sigma,2)*Theta00 + 4*Power(dloga,3)*Power(eps,2)*fnu*Or*Power(sigma,2)*Theta00 + 120*dloga*fgam*Or*Theta20 + 36*Power(dloga,2)*fgam*Or*sigma*Theta20 + 12*Power(dloga,2)*fgam*Or*sigma*ThetaP00 + 12*Power(dloga,2)*fgam*Or*sigma*ThetaP20)/ (Power(eps,2)*(2 + dloga*(2 + 2*Power(eps,2) + 3*fb*Om + 3*fc*Om + 4*fgam*Or + 4*fnu*Or))*(1 + dloga*sigma)*(5 + dloga*sigma))),
+				Rule(Theta1,-(20*Power(dloga,2)*Power(eps,2)*fnu*N00*Or*R + 120*dloga*fnu*N20*Or*R + 120*Power(dloga,2)*Power(eps,2)*fnu*N20*Or*R + 180*Power(dloga,2)*fb*fnu*N20*Om*Or*R + 180*Power(dloga,2)*fc*fnu*N20*Om*Or*R + 240*Power(dloga,2)*fgam*fnu*N20*Power(Or,2)*R + 240*Power(dloga,2)*Power(fnu,2)*N20*Power(Or,2)*R + 10*dloga*Power(eps,2)*Phi0*R + 15*Power(dloga,2)*Power(eps,2)*fb*Om*Phi0*R + 15*Power(dloga,2)*Power(eps,2)*fc*Om*Phi0*R + 20*Power(dloga,2)*Power(eps,2)*fgam*Or*Phi0*R + 20*Power(dloga,2)*Power(eps,2)*fnu*Or*Phi0*R + 20*Power(dloga,3)*Power(eps,2)*fnu*N00*Or*sigma + 120*Power(dloga,2)*fnu*N20*Or*sigma + 120*Power(dloga,3)*Power(eps,2)*fnu*N20*Or*sigma + 180*Power(dloga,3)*fb*fnu*N20*Om*Or*sigma + 180*Power(dloga,3)*fc*fnu*N20*Om*Or*sigma + 240*Power(dloga,3)*fgam*fnu*N20*Power(Or,2)*sigma + 240*Power(dloga,3)*Power(fnu,2)*N20*Power(Or,2)*sigma + 10*Power(dloga,2)*Power(eps,2)*Phi0*sigma + 15*Power(dloga,3)*Power(eps,2)*fb*Om*Phi0*sigma + 15*Power(dloga,3)*Power(eps,2)*fc*Om*Phi0*sigma + 20*Power(dloga,3)*Power(eps,2)*fgam*Or*Phi0*sigma + 20*Power(dloga,3)*Power(eps,2)*fnu*Or*Phi0*sigma + 44*Power(dloga,3)*Power(eps,2)*fnu*N00*Or*R*sigma + 264*Power(dloga,2)*fnu*N20*Or*R*sigma + 264*Power(dloga,3)*Power(eps,2)*fnu*N20*Or*R*sigma + 396*Power(dloga,3)*fb*fnu*N20*Om*Or*R*sigma + 396*Power(dloga,3)*fc*fnu*N20*Om*Or*R*sigma + 528*Power(dloga,3)*fgam*fnu*N20*Power(Or,2)*R*sigma + 528*Power(dloga,3)*Power(fnu,2)*N20*Power(Or,2)*R*sigma + 22*Power(dloga,2)*Power(eps,2)*Phi0*R*sigma + 33*Power(dloga,3)*Power(eps,2)*fb*Om*Phi0*R*sigma + 33*Power(dloga,3)*Power(eps,2)*fc*Om*Phi0*R*sigma + 44*Power(dloga,3)*Power(eps,2)*fgam*Or*Phi0*R*sigma + 44*Power(dloga,3)*Power(eps,2)*fnu*Or*Phi0*R*sigma + 24*Power(dloga,4)*Power(eps,2)*fnu*N00*Or*Power(sigma,2) + 144*Power(dloga,3)*fnu*N20*Or*Power(sigma,2) + 144*Power(dloga,4)*Power(eps,2)*fnu*N20*Or*Power(sigma,2) + 216*Power(dloga,4)*fb*fnu*N20*Om*Or*Power(sigma,2) + 216*Power(dloga,4)*fc*fnu*N20*Om*Or*Power(sigma,2) + 288*Power(dloga,4)*fgam*fnu*N20*Power(Or,2)*Power(sigma,2) + 288*Power(dloga,4)*Power(fnu,2)*N20*Power(Or,2)*Power(sigma,2) + 12*Power(dloga,3)*Power(eps,2)*Phi0*Power(sigma,2) + 18*Power(dloga,4)*Power(eps,2)*fb*Om*Phi0*Power(sigma,2) + 18*Power(dloga,4)*Power(eps,2)*fc*Om*Phi0*Power(sigma,2) + 24*Power(dloga,4)*Power(eps,2)*fgam*Or*Phi0*Power(sigma,2) + 24*Power(dloga,4)*Power(eps,2)*fnu*Or*Phi0*Power(sigma,2) + 28*Power(dloga,4)*Power(eps,2)*fnu*N00*Or*R*Power(sigma,2) + 168*Power(dloga,3)*fnu*N20*Or*R*Power(sigma,2) + 168*Power(dloga,4)*Power(eps,2)*fnu*N20*Or*R*Power(sigma,2) + 252*Power(dloga,4)*fb*fnu*N20*Om*Or*R*Power(sigma,2) + 252*Power(dloga,4)*fc*fnu*N20*Om*Or*R*Power(sigma,2) + 336*Power(dloga,4)*fgam*fnu*N20*Power(Or,2)*R*Power(sigma,2) + 336*Power(dloga,4)*Power(fnu,2)*N20*Power(Or,2)*R*Power(sigma,2) + 14*Power(dloga,3)*Power(eps,2)*Phi0*R*Power(sigma,2) + 21*Power(dloga,4)*Power(eps,2)*fb*Om*Phi0*R*Power(sigma,2) + 21*Power(dloga,4)*Power(eps,2)*fc*Om*Phi0*R*Power(sigma,2) + 28*Power(dloga,4)*Power(eps,2)*fgam*Or*Phi0*R*Power(sigma,2) + 28*Power(dloga,4)*Power(eps,2)*fnu*Or*Phi0*R*Power(sigma,2) + 4*Power(dloga,5)*Power(eps,2)*fnu*N00*Or*Power(sigma,3) + 24*Power(dloga,4)*fnu*N20*Or*Power(sigma,3) + 24*Power(dloga,5)*Power(eps,2)*fnu*N20*Or*Power(sigma,3) + 36*Power(dloga,5)*fb*fnu*N20*Om*Or*Power(sigma,3) + 36*Power(dloga,5)*fc*fnu*N20*Om*Or*Power(sigma,3) + 48*Power(dloga,5)*fgam*fnu*N20*Power(Or,2)*Power(sigma,3) + 48*Power(dloga,5)*Power(fnu,2)*N20*Power(Or,2)*Power(sigma,3) + 2*Power(dloga,4)*Power(eps,2)*Phi0*Power(sigma,3) + 3*Power(dloga,5)*Power(eps,2)*fb*Om*Phi0*Power(sigma,3) + 3*Power(dloga,5)*Power(eps,2)*fc*Om*Phi0*Power(sigma,3) + 4*Power(dloga,5)*Power(eps,2)*fgam*Or*Phi0*Power(sigma,3) + 4*Power(dloga,5)*Power(eps,2)*fnu*Or*Phi0*Power(sigma,3) + 4*Power(dloga,5)*Power(eps,2)*fnu*N00*Or*R*Power(sigma,3) + 24*Power(dloga,4)*fnu*N20*Or*R*Power(sigma,3) + 24*Power(dloga,5)*Power(eps,2)*fnu*N20*Or*R*Power(sigma,3) + 36*Power(dloga,5)*fb*fnu*N20*Om*Or*R*Power(sigma,3) + 36*Power(dloga,5)*fc*fnu*N20*Om*Or*R*Power(sigma,3) + 48*Power(dloga,5)*fgam*fnu*N20*Power(Or,2)*R*Power(sigma,3) + 48*Power(dloga,5)*Power(fnu,2)*N20*Power(Or,2)*R*Power(sigma,3) + 2*Power(dloga,4)*Power(eps,2)*Phi0*R*Power(sigma,3) + 3*Power(dloga,5)*Power(eps,2)*fb*Om*Phi0*R*Power(sigma,3) + 3*Power(dloga,5)*Power(eps,2)*fc*Om*Phi0*R*Power(sigma,3) + 4*Power(dloga,5)*Power(eps,2)*fgam*Or*Phi0*R*Power(sigma,3) + 4*Power(dloga,5)*Power(eps,2)*fnu*Or*Phi0*R*Power(sigma,3) + deltab0*Power(dloga,2)*Power(eps,2)*fb*Om*(R + dloga*sigma + dloga*R*sigma)*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + delta0*Power(dloga,2)*Power(eps,2)*fc*Om*(R + dloga*sigma + dloga*R*sigma)*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + 20*Power(dloga,2)*Power(eps,2)*fgam*Or*R*Theta00 + 20*Power(dloga,3)*Power(eps,2)*fgam*Or*sigma*Theta00 + 44*Power(dloga,3)*Power(eps,2)*fgam*Or*R*sigma*Theta00 + 24*Power(dloga,4)*Power(eps,2)*fgam*Or*Power(sigma,2)*Theta00 + 28*Power(dloga,4)*Power(eps,2)*fgam*Or*R*Power(sigma,2)*Theta00 + 4*Power(dloga,5)*Power(eps,2)*fgam*Or*Power(sigma,3)*Theta00 + 4*Power(dloga,5)*Power(eps,2)*fgam*Or*R*Power(sigma,3)*Theta00 - 30*eps*R*Theta10 - 30*dloga*eps*R*Theta10 - 30*dloga*Power(eps,3)*R*Theta10 - 45*dloga*eps*fb*Om*R*Theta10 - 45*dloga*eps*fc*Om*R*Theta10 - 60*dloga*eps*fgam*Or*R*Theta10 - 60*dloga*eps*fnu*Or*R*Theta10 - 30*dloga*eps*sigma*Theta10 - 30*Power(dloga,2)*eps*sigma*Theta10 - 30*Power(dloga,2)*Power(eps,3)*sigma*Theta10 - 45*Power(dloga,2)*eps*fb*Om*sigma*Theta10 - 45*Power(dloga,2)*eps*fc*Om*sigma*Theta10 - 60*Power(dloga,2)*eps*fgam*Or*sigma*Theta10 - 60*Power(dloga,2)*eps*fnu*Or*sigma*Theta10 - 36*dloga*eps*R*sigma*Theta10 - 36*Power(dloga,2)*eps*R*sigma*Theta10 - 36*Power(dloga,2)*Power(eps,3)*R*sigma*Theta10 - 54*Power(dloga,2)*eps*fb*Om*R*sigma*Theta10 - 54*Power(dloga,2)*eps*fc*Om*R*sigma*Theta10 - 72*Power(dloga,2)*eps*fgam*Or*R*sigma*Theta10 - 72*Power(dloga,2)*eps*fnu*Or*R*sigma*Theta10 - 36*Power(dloga,2)*eps*Power(sigma,2)*Theta10 - 36*Power(dloga,3)*eps*Power(sigma,2)*Theta10 - 36*Power(dloga,3)*Power(eps,3)*Power(sigma,2)*Theta10 - 54*Power(dloga,3)*eps*fb*Om*Power(sigma,2)*Theta10 - 54*Power(dloga,3)*eps*fc*Om*Power(sigma,2)*Theta10 - 72*Power(dloga,3)*eps*fgam*Or*Power(sigma,2)*Theta10 - 72*Power(dloga,3)*eps*fnu*Or*Power(sigma,2)*Theta10 - 6*Power(dloga,2)*eps*R*Power(sigma,2)*Theta10 - 6*Power(dloga,3)*eps*R*Power(sigma,2)*Theta10 - 6*Power(dloga,3)*Power(eps,3)*R*Power(sigma,2)*Theta10 - 9*Power(dloga,3)*eps*fb*Om*R*Power(sigma,2)*Theta10 - 9*Power(dloga,3)*eps*fc*Om*R*Power(sigma,2)*Theta10 - 12*Power(dloga,3)*eps*fgam*Or*R*Power(sigma,2)*Theta10 - 12*Power(dloga,3)*eps*fnu*Or*R*Power(sigma,2)*Theta10 - 6*Power(dloga,3)*eps*Power(sigma,3)*Theta10 - 6*Power(dloga,4)*eps*Power(sigma,3)*Theta10 - 6*Power(dloga,4)*Power(eps,3)*Power(sigma,3)*Theta10 - 9*Power(dloga,4)*eps*fb*Om*Power(sigma,3)*Theta10 - 9*Power(dloga,4)*eps*fc*Om*Power(sigma,3)*Theta10 - 12*Power(dloga,4)*eps*fgam*Or*Power(sigma,3)*Theta10 - 12*Power(dloga,4)*eps*fnu*Or*Power(sigma,3)*Theta10 + 120*dloga*fgam*Or*R*Theta20 + 120*Power(dloga,2)*Power(eps,2)*fgam*Or*R*Theta20 + 180*Power(dloga,2)*fb*fgam*Om*Or*R*Theta20 + 180*Power(dloga,2)*fc*fgam*Om*Or*R*Theta20 + 240*Power(dloga,2)*Power(fgam,2)*Power(Or,2)*R*Theta20 + 240*Power(dloga,2)*fgam*fnu*Power(Or,2)*R*Theta20 + 120*Power(dloga,2)*fgam*Or*sigma*Theta20 + 120*Power(dloga,3)*Power(eps,2)*fgam*Or*sigma*Theta20 + 180*Power(dloga,3)*fb*fgam*Om*Or*sigma*Theta20 + 180*Power(dloga,3)*fc*fgam*Om*Or*sigma*Theta20 + 240*Power(dloga,3)*Power(fgam,2)*Power(Or,2)*sigma*Theta20 + 240*Power(dloga,3)*fgam*fnu*Power(Or,2)*sigma*Theta20 + 156*Power(dloga,2)*fgam*Or*R*sigma*Theta20 + 156*Power(dloga,3)*Power(eps,2)*fgam*Or*R*sigma*Theta20 + 234*Power(dloga,3)*fb*fgam*Om*Or*R*sigma*Theta20 + 234*Power(dloga,3)*fc*fgam*Om*Or*R*sigma*Theta20 + 312*Power(dloga,3)*Power(fgam,2)*Power(Or,2)*R*sigma*Theta20 + 312*Power(dloga,3)*fgam*fnu*Power(Or,2)*R*sigma*Theta20 + 36*Power(dloga,3)*fgam*Or*Power(sigma,2)*Theta20 + 36*Power(dloga,4)*Power(eps,2)*fgam*Or*Power(sigma,2)*Theta20 + 54*Power(dloga,4)*fb*fgam*Om*Or*Power(sigma,2)*Theta20 + 54*Power(dloga,4)*fc*fgam*Om*Or*Power(sigma,2)*Theta20 + 72*Power(dloga,4)*Power(fgam,2)*Power(Or,2)*Power(sigma,2)*Theta20 + 72*Power(dloga,4)*fgam*fnu*Power(Or,2)*Power(sigma,2)*Theta20 + 36*Power(dloga,3)*fgam*Or*R*Power(sigma,2)*Theta20 + 36*Power(dloga,4)*Power(eps,2)*fgam*Or*R*Power(sigma,2)*Theta20 + 54*Power(dloga,4)*fb*fgam*Om*Or*R*Power(sigma,2)*Theta20 + 54*Power(dloga,4)*fc*fgam*Om*Or*R*Power(sigma,2)*Theta20 + 72*Power(dloga,4)*Power(fgam,2)*Power(Or,2)*R*Power(sigma,2)*Theta20 + 72*Power(dloga,4)*fgam*fnu*Power(Or,2)*R*Power(sigma,2)*Theta20 + 12*Power(dloga,2)*fgam*Or*R*sigma*ThetaP00 + 12*Power(dloga,3)*Power(eps,2)*fgam*Or*R*sigma*ThetaP00 + 18*Power(dloga,3)*fb*fgam*Om*Or*R*sigma*ThetaP00 + 18*Power(dloga,3)*fc*fgam*Om*Or*R*sigma*ThetaP00 + 24*Power(dloga,3)*Power(fgam,2)*Power(Or,2)*R*sigma*ThetaP00 + 24*Power(dloga,3)*fgam*fnu*Power(Or,2)*R*sigma*ThetaP00 + 12*Power(dloga,3)*fgam*Or*Power(sigma,2)*ThetaP00 + 12*Power(dloga,4)*Power(eps,2)*fgam*Or*Power(sigma,2)*ThetaP00 + 18*Power(dloga,4)*fb*fgam*Om*Or*Power(sigma,2)*ThetaP00 + 18*Power(dloga,4)*fc*fgam*Om*Or*Power(sigma,2)*ThetaP00 + 24*Power(dloga,4)*Power(fgam,2)*Power(Or,2)*Power(sigma,2)*ThetaP00 + 24*Power(dloga,4)*fgam*fnu*Power(Or,2)*Power(sigma,2)*ThetaP00 + 12*Power(dloga,3)*fgam*Or*R*Power(sigma,2)*ThetaP00 + 12*Power(dloga,4)*Power(eps,2)*fgam*Or*R*Power(sigma,2)*ThetaP00 + 18*Power(dloga,4)*fb*fgam*Om*Or*R*Power(sigma,2)*ThetaP00 + 18*Power(dloga,4)*fc*fgam*Om*Or*R*Power(sigma,2)*ThetaP00 + 24*Power(dloga,4)*Power(fgam,2)*Power(Or,2)*R*Power(sigma,2)*ThetaP00 + 24*Power(dloga,4)*fgam*fnu*Power(Or,2)*R*Power(sigma,2)*ThetaP00 + 12*Power(dloga,2)*fgam*Or*R*sigma*ThetaP20 + 12*Power(dloga,3)*Power(eps,2)*fgam*Or*R*sigma*ThetaP20 + 18*Power(dloga,3)*fb*fgam*Om*Or*R*sigma*ThetaP20 + 18*Power(dloga,3)*fc*fgam*Om*Or*R*sigma*ThetaP20 + 24*Power(dloga,3)*Power(fgam,2)*Power(Or,2)*R*sigma*ThetaP20 + 24*Power(dloga,3)*fgam*fnu*Power(Or,2)*R*sigma*ThetaP20 + 12*Power(dloga,3)*fgam*Or*Power(sigma,2)*ThetaP20 + 12*Power(dloga,4)*Power(eps,2)*fgam*Or*Power(sigma,2)*ThetaP20 + 18*Power(dloga,4)*fb*fgam*Om*Or*Power(sigma,2)*ThetaP20 + 18*Power(dloga,4)*fc*fgam*Om*Or*Power(sigma,2)*ThetaP20 + 24*Power(dloga,4)*Power(fgam,2)*Power(Or,2)*Power(sigma,2)*ThetaP20 + 24*Power(dloga,4)*fgam*fnu*Power(Or,2)*Power(sigma,2)*ThetaP20 + 12*Power(dloga,3)*fgam*Or*R*Power(sigma,2)*ThetaP20 + 12*Power(dloga,4)*Power(eps,2)*fgam*Or*R*Power(sigma,2)*ThetaP20 + 18*Power(dloga,4)*fb*fgam*Om*Or*R*Power(sigma,2)*ThetaP20 + 18*Power(dloga,4)*fc*fgam*Om*Or*R*Power(sigma,2)*ThetaP20 + 24*Power(dloga,4)*Power(fgam,2)*Power(Or,2)*R*Power(sigma,2)*ThetaP20 + 24*Power(dloga,4)*fgam*fnu*Power(Or,2)*R*Power(sigma,2)*ThetaP20 - 10*dloga*eps*R*sigma*ub0 - 10*Power(dloga,2)*eps*R*sigma*ub0 - 10*Power(dloga,2)*Power(eps,3)*R*sigma*ub0 - 15*Power(dloga,2)*eps*fb*Om*R*sigma*ub0 - 15*Power(dloga,2)*eps*fc*Om*R*sigma*ub0 - 20*Power(dloga,2)*eps*fgam*Or*R*sigma*ub0 - 20*Power(dloga,2)*eps*fnu*Or*R*sigma*ub0 - 12*Power(dloga,2)*eps*R*Power(sigma,2)*ub0 - 12*Power(dloga,3)*eps*R*Power(sigma,2)*ub0 - 12*Power(dloga,3)*Power(eps,3)*R*Power(sigma,2)*ub0 - 18*Power(dloga,3)*eps*fb*Om*R*Power(sigma,2)*ub0 - 18*Power(dloga,3)*eps*fc*Om*R*Power(sigma,2)*ub0 - 24*Power(dloga,3)*eps*fgam*Or*R*Power(sigma,2)*ub0 - 24*Power(dloga,3)*eps*fnu*Or*R*Power(sigma,2)*ub0 - 2*Power(dloga,3)*eps*R*Power(sigma,3)*ub0 - 2*Power(dloga,4)*eps*R*Power(sigma,3)*ub0 - 2*Power(dloga,4)*Power(eps,3)*R*Power(sigma,3)*ub0 - 3*Power(dloga,4)*eps*fb*Om*R*Power(sigma,3)*ub0 - 3*Power(dloga,4)*eps*fc*Om*R*Power(sigma,3)*ub0 - 4*Power(dloga,4)*eps*fgam*Or*R*Power(sigma,3)*ub0 - 4*Power(dloga,4)*eps*fnu*Or*R*Power(sigma,3)*ub0)/ (3.*eps*(2 + dloga*(2 + 2*Power(eps,2) + 3*fb*Om + 3*fc*Om + 4*fgam*Or + 4*fnu*Or))*(1 + dloga*sigma)*(5 + dloga*sigma)*(R + dloga*sigma + dloga*R*sigma))),
+				Rule(Theta2,((10 + 3*dloga*sigma)*Theta20 + dloga*sigma*(ThetaP00 + ThetaP20))/(2.*(1 + dloga*sigma)*(5 + dloga*sigma))),
+				Rule(Theta3,Theta30/(1 + dloga*sigma)),
+				Rule(ThetaP0,(10*ThetaP00 + dloga*sigma*(5*Theta20 + 7*ThetaP00 + 5*ThetaP20))/(2.*(1 + dloga*sigma)*(5 + dloga*sigma))),
+				Rule(ThetaP1,ThetaP10/(1 + dloga*sigma)),
+				Rule(ThetaP2,(5*ThetaP20 + dloga*sigma*(Theta20 + ThetaP00 + 2*ThetaP20))/((1 + dloga*sigma)*(5 + dloga*sigma))),
+				Rule(ThetaP3,ThetaP30/(1 + dloga*sigma)),
+				Rule(N0,(2*dloga*Power(eps,4)*(N00 + Phi0)*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + Power(eps,2)*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2))*(N00*(2 + dloga*(2 + 3*fb*Om + 3*fc*Om + 4*fgam*Or)) - dloga*(deltab0*fb*Om + delta0*fc*Om - 2*Phi0 + 4*fgam*Or*Theta00)) + 12*dloga*Or*(2*fnu*N20*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + fgam*(10 + 3*dloga*sigma)*Theta20 + dloga*fgam*sigma*(ThetaP00 + ThetaP20)))/ (Power(eps,2)*(2 + dloga*(2 + 2*Power(eps,2) + 3*fb*Om + 3*fc*Om + 4*fgam*Or + 4*fnu*Or))*(1 + dloga*sigma)*(5 + dloga*sigma))),
+				Rule(N1,(6*dloga*Power(eps,3)*N10*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + 3*eps*N10*(2 + dloga*(2 + 3*fb*Om + 3*fc*Om + 4*fgam*Or + 4*fnu*Or))*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) - dloga*Power(eps,2)*(20*dloga*fnu*N00*Or + 120*dloga*fnu*N20*Or + 10*Phi0 + 15*dloga*fb*Om*Phi0 + 15*dloga*fc*Om*Phi0 + 20*dloga*fgam*Or*Phi0 + 20*dloga*fnu*Or*Phi0 + 24*Power(dloga,2)*fnu*N00*Or*sigma + 144*Power(dloga,2)*fnu*N20*Or*sigma + 12*dloga*Phi0*sigma + 18*Power(dloga,2)*fb*Om*Phi0*sigma + 18*Power(dloga,2)*fc*Om*Phi0*sigma + 24*Power(dloga,2)*fgam*Or*Phi0*sigma + 24*Power(dloga,2)*fnu*Or*Phi0*sigma + 4*Power(dloga,3)*fnu*N00*Or*Power(sigma,2) + 24*Power(dloga,3)*fnu*N20*Or*Power(sigma,2) + 2*Power(dloga,2)*Phi0*Power(sigma,2) + 3*Power(dloga,3)*fb*Om*Phi0*Power(sigma,2) + 3*Power(dloga,3)*fc*Om*Phi0*Power(sigma,2) + 4*Power(dloga,3)*fgam*Or*Phi0*Power(sigma,2) + 4*Power(dloga,3)*fnu*Or*Phi0*Power(sigma,2) + deltab0*dloga*fb*Om*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + delta0*dloga*fc*Om*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + 20*dloga*fgam*Or*Theta00 + 24*Power(dloga,2)*fgam*Or*sigma*Theta00 + 4*Power(dloga,3)*fgam*Or*Power(sigma,2)*Theta00 + 120*dloga*fgam*Or*Theta20 + 36*Power(dloga,2)*fgam*Or*sigma*Theta20 + 12*Power(dloga,2)*fgam*Or*sigma*ThetaP00 + 12*Power(dloga,2)*fgam*Or*sigma*ThetaP20) - 6*dloga*Or*(2 + dloga*(3*fb*Om + 3*fc*Om + 4*(fgam + fnu)*Or))*(2*fnu*N20*(5 + 6*dloga*sigma + Power(dloga,2)*Power(sigma,2)) + fgam*(10 + 3*dloga*sigma)*Theta20 + dloga*fgam*sigma*(ThetaP00 + ThetaP20)))/(3.*eps*(2 + dloga*(2 + 2*Power(eps,2) + 3*fb*Om + 3*fc*Om + 4*fgam*Or + 4*fnu*Or))*(1 + dloga*sigma)*(5 + dloga*sigma))),
+				Rule(N2,N20), Rule(N3,N30));
 		eta += dloga / (a * H);
 		loga += dloga;
 	}
@@ -521,17 +544,17 @@ void advance(state &u, double k, double a0, double a1, std::function<double(doub
 
 void initial_conditions(state &u, double k, double a) {
 	const auto eps = k / (a * Hubble(a));
-	const auto Rnu = omega_nu / (0.75 * omega_m * a + omega_r);
-	u[Phii] = -(1.0 + 0.4 * Rnu) * u[Psii];
-	u[Thetai + 0] = -0.5 * u[Psii];
-	u[Thetai + 1] = eps / 6.0 * u[Psii];
+	const auto Psii = 1.0;
+	u[Thetai + 0] = -0.5 * Psii;
+	u[Thetai + 1] = eps / 6.0 * Psii;
 	u[Ni + 0] = u[Thetai + 0];
 	u[Ni + 1] = u[Thetai + 1];
-	u[Ni + 2] = u[Psii] / 30.0;
-	u[deltaci] = 3.0 * u[Thetai + 0];
-	u[uci] = 3.0 * u[Thetai + 1];
+	u[Ni + 2] = eps * eps / 30.0 * Psii;
+	u[deltai] = 3.0 * u[Thetai + 0];
+	u[ui] = 3.0 * u[Thetai + 1];
 	u[deltabi] = 3.0 * u[Thetai + 0];
 	u[ubi] = 3.0 * u[Thetai + 1];
+	u[Phii] = -12.0 * omega_nu / (a * omega_m + omega_r) * (u[Ni + 2]) / (eps * eps) - Psii;
 	for (int l = 0; l < LMAX; l++) {
 		u[ThetaPi + l] = 0.0;
 	}
@@ -544,10 +567,11 @@ void initial_conditions(state &u, double k, double a) {
 }
 
 int main() {
-	std::array<std::array<double, 3>, 3 > A = {{ { -1, -2, 3 }, { 4, 5, 6 }, { 7, 8, 0 }} };
-	printf( "%e\n", matrix_determinant<3>(A));
+	std::array<std::array<double, 3>, 3> A = { { { -1, -2, -3 }, { 4, 5, 6 }, { 7, 8, 0 } } };
+//	compute_eigenvalues<3>(A)
+	//	printf("%e\n", matrix_determinant<3>(A));
 
-	//	const auto f = [](cmplx x) {
+//	const auto f = [](cmplx x) {
 //		return (x + 1.0) * (x + 1.0) * x;
 //	};
 //	const auto dfdx = [](cmplx x) {
@@ -556,17 +580,17 @@ int main() {
 //	auto roots = find_roots(f, 3);
 //	printf("%e %e %e %e %e %e \n", roots[0].real(), roots[0].imag(), roots[1].real(), roots[1].imag(), roots[2].real(), roots[2].imag());
 
-//	double amin = 1e-8;
-//	double amax = 1.0;
-//	std::function<double(double)> cs, thomson;
-//	zero_order_universe(amin, amax, cs, thomson);
-//	for (double k = 1e-4; k <= 1; k *= 1.1) {
-//		state u;
-//		u[Psii] = 1.0;
-//		initial_conditions(u, k, amin);
-//		advance(u, k, amin, amax, cs, thomson);
-//		printf("%e %e\n", k, k * std::pow(u[Psii], 2));
-//	}
+	double amin = 1e-8;
+	double amax = 1.0;
+	std::function<double(double)> cs, thomson;
+	zero_order_universe(amin, amax, cs, thomson);
+	for (double k = 1; k <= 1; k *= 1.1) {
+		state u;
+		initial_conditions(u, k, amin);
+		advance(u, k, amin, amax, cs, thomson);
+		break;
+		printf("%e %e\n", k, k * std::pow(u[Phii], 2));
+	}
 //	using namespace constants;
 //	double Tgas = 1e6;
 //	double eps;
