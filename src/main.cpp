@@ -185,23 +185,29 @@ void chemistry_update(double &H, double &Hp, double &He, double &Hep, double &He
 		ne = ne1;
 	} else {
 		double nH = H + Hp;
-		double hubble = Hubble(a) * H0cgs / H0;
-		using namespace constants;
-		const auto B1 = 13.6 * evtoerg;
-		const auto phi2 = std::max(0.448 * std::log(B1 / (kb * T)), 0.0);
-		const auto alpha2 = 64.0 * M_PI / std::sqrt(27.0 * M_PI) * B1 * 2.0 * std::pow(hbar, 2) / std::pow(me * clight, 3) / std::sqrt(kb * T / B1) * phi2;
-		const auto beta = std::pow((me * kb * T) / (2 * M_PI * hbar * hbar), 1.5) * std::exp(-B1 / (kb * T)) * alpha2;
-		const auto lambda_a = 8.0 * M_PI * hbar * clight / (3.0 * B1);
-		const auto num = hplanck * clight / lambda_a / kb / T;
-		const auto beta2 = beta * std::exp(std::min(num, 80.0));
-		const auto La = 8.0 * M_PI * hubble / (a * std::pow(lambda_a, 3) * nH);
-		const auto L2s = 8.227;
 		double x0 = Hp / nH;
-
-		const auto func = [=](double x) {
-			return (x - (dt * (L2s + La / (1 - x)) * (beta * (1 - x) - alpha2 * nH * Power(x, 2))) / (beta2 + L2s + La / (1 - x)) - x0)*(1-x);
+		const auto dxdt = [=](double x0, double dt) {
+			double hubble = Hubble(a) * H0cgs / H0;
+			using namespace constants;
+			const auto B1 = 13.6 * evtoerg;
+			const auto phi2 = std::max(0.448 * std::log(B1 / (kb * T)), 0.0);
+			const auto alpha2 = 64.0 * M_PI / std::sqrt(27.0 * M_PI) * B1 * 2.0 * std::pow(hbar, 2) / std::pow(me * clight, 3) / std::sqrt(kb * T / B1) * phi2;
+			const auto beta = std::pow((me * kb * T) / (2 * M_PI * hbar * hbar), 1.5) * std::exp(-B1 / (kb * T)) * alpha2;
+			const auto lambda_a = 8.0 * M_PI * hbar * clight / (3.0 * B1);
+			const auto num = hplanck * clight / lambda_a / kb / T;
+			const auto beta2 = beta * std::exp(std::min(num, 80.0));
+			const auto La = 8.0 * M_PI * hubble / (a * std::pow(lambda_a, 3) * nH);
+			const auto L2s = 8.227;
+			const auto func = [=](double x) {
+				return (x - (dt * (L2s + La / (1 - x)) * (beta * (1 - x) - alpha2 * nH * Power(x, 2))) / (beta2 + L2s + La / (1 - x)) - x0) * (1 - x);
+			};
+			double x = find_root(func);
+			return (x - x0) / dt;
 		};
-		double x = find_root(func);
+		double gam = 1.0 - 1.0 / std::sqrt(2);
+		double dx1 = dxdt(x0, gam * dt);
+		double dx2 = dxdt(x0 + (1 - 2 * gam) * dx1 * dt, gam * dt);
+		double x = (x0 + 0.5 * (dx1 * dt + dx2 * dt));
 		He = He0 + Hep0 + Hepp0;
 		Hep = 0.0;
 		Hepp = 0.0;
