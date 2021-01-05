@@ -44,7 +44,7 @@ const double Yp = (1 - hefrac / 2.0);
 double Hubble(double a) {
 	return H0 * h * std::sqrt(omega_r / (a * a * a * a) + omega_m / (a * a * a) + omega_lambda);
 }
-#define LMAX 8
+#define LMAX 100
 
 #define Phii 0
 #define deltai 1
@@ -197,8 +197,9 @@ void chemistry_update(double &H, double &Hp, double &He, double &Hep, double &He
 		const auto La = 8.0 * M_PI * hubble / (a * std::pow(lambda_a, 3) * nH);
 		const auto L2s = 8.227;
 		double x0 = Hp / nH;
+
 		const auto func = [=](double x) {
-			return x - (dt * (L2s + La / (1 - x)) * (1 - x) * (beta * (1 - x) - alpha2 * nH * Power(x, 2))) / (beta2 + L2s + La / (1 - x)) - x0;
+			return (x - (dt * (L2s + La / (1 - x)) * (beta * (1 - x) - alpha2 * nH * Power(x, 2))) / (beta2 + L2s + La / (1 - x)) - x0)*(1-x);
 		};
 		double x = find_root(func);
 		He = He0 + Hep0 + Hepp0;
@@ -302,12 +303,13 @@ void zero_order_universe(double amin, double amax, std::function<double(double)>
 		}
 		sound_speed[i] = cs / clight;
 		thomson[i] = clight * sigma_T * ne / hubble;
-//		printf("%e %e %e %e\n", 1 / a - 1, Tgas, (Hp + Hep + 2 * Hepp) / (H + Hp + 2 * He + 2 * Hep + 2 * Hepp), thomson[i]);
+		printf("%e %e %e %e\n", 1 / a - 1, Tgas, (Hp + Hep + 2 * Hepp) / (H + Hp + 2 * He + 2 * Hep + 2 * Hepp), thomson[i]);
 		t += dt;
 		last_a = a;
 	}
 	csfunc = build_interpolation_function(sound_speed, amin, amax);
 	thomsonfunc = build_interpolation_function(thomson, amin, amax);
+	abort();
 }
 
 void advance(state &U, double k, double a0, double a1, std::function<double(double)> cs, std::function<double(double)> thomson) {
