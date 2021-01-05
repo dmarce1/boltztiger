@@ -44,7 +44,7 @@ const double Yp = (1 - hefrac / 2.0);
 double Hubble(double a) {
 	return H0 * h * std::sqrt(omega_r / (a * a * a * a) + omega_m / (a * a * a) + omega_lambda);
 }
-#define LMAX 4
+#define LMAX 100
 
 #define Phii 0
 #define deltai 1
@@ -446,7 +446,7 @@ void advance(state &U, double k, double a0, double a1, std::function<double(doub
 		};
 		compute_parameters(loga);
 		const auto lambda_max = std::max(std::max(std::max(1.0 + cs2 * eps, eps + 4.0 / etaaH), 0.5 * Om + 2.0 * Or), (1 + eps * eps / 3.0));
-		const auto dloga = std::min(0.5 / lambda_max, logamax - loga);
+		const auto dloga = std::min(3 / lambda_max, logamax - loga);
 
 		const auto dudt_exp = [&](state U) {
 			state dudt;
@@ -518,9 +518,9 @@ void advance(state &U, double k, double a0, double a1, std::function<double(doub
 					dudt[Ni + 1] = (N1 - N10) / dloga;
 					dudt[Ni + 2] = (N2 - N20) / dloga;
 					for (int l = 3; l < LMAX; l++) {
-						dudt[Thetai + l] = -sigma * dloga / (1 + sigma * dloga) * U[Thetai + l];
-						dudt[ThetaPi + l] = -sigma * dloga / (1 + sigma * dloga) * U[ThetaPi + l];
-						dudt[Ni + l] = -sigma * dloga / (1 + sigma * dloga) * U[Ni + l];
+						dudt[Thetai + l] = -sigma  / (1 + sigma * dloga) * U[Thetai + l];
+						dudt[ThetaPi + l] = -sigma / (1 + sigma * dloga) * U[ThetaPi + l];
+						dudt[Ni + l] = -sigma  / (1 + sigma * dloga) * U[Ni + l];
 					}
 					return dudt;
 				};
@@ -533,13 +533,6 @@ void advance(state &U, double k, double a0, double a1, std::function<double(doub
 		std::array<double, Nstage> c_exp = { 0, gamma, 1 - gamma };
 		std::array<double, Nstage> w_imp = { 0, 0.5, 0.5 };
 		std::array<double, Nstage> w_exp = { 0, 0.5, 0.5 };
-//		constexpr int Nstage = 2;
-//		std::array<std::array<double, Nstage>, Nstage> a_imp = { { { 0, 0 }, { 0, 1 } } };
-//		std::array<std::array<double, Nstage>, Nstage> a_exp = { { { 0, 0 }, { 1, 0 } } };
-//		std::array<double, Nstage> c_imp = { 0, 1};
-//		std::array<double, Nstage> c_exp = { 0, 1};
-//		std::array<double, Nstage> w_imp = { 0, 1};
-//		std::array<double, Nstage> w_exp = { 0, 1};
 		std::array<state, Nstage> du_exp;
 		std::array<state, Nstage> du_imp;
 		state U0 = U;
