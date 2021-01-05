@@ -44,7 +44,7 @@ const double Yp = (1 - hefrac / 2.0);
 double Hubble(double a) {
 	return H0 * h * std::sqrt(omega_r / (a * a * a * a) + omega_m / (a * a * a) + omega_lambda);
 }
-#define LMAX 100
+#define LMAX 8
 
 #define Phii 0
 #define deltai 1
@@ -290,10 +290,14 @@ void zero_order_universe(double amin, double amax, std::function<double(double)>
 		const auto sigma_T = 6.65e-25;
 		double sigmaC;
 		if (i > 0) {
+			constexpr auto gamma = 1.0 - 1.0 / std::sqrt(2);
 			chemistry_update(H, Hp, He, Hep, Hepp, ne, Tgas, a, 0.5 * dt);
 			const auto mu = (H + Hp + 4 * He + 4 * Hep + 4 * Hepp) * mh / (H + Hp + He + Hep + Hepp + ne);
 			sigmaC = mu / me * clight * (8.0 / 3.0) * omega_gam / (a * omega_m) * sigma_T * ne / hubble;
-			Tgas = (Tgas+ dloga*sigmaC*Trad)/(1 + dloga*(2 + sigmaC));
+			const auto dTgasdT1 = ((Tgas + gamma * dloga * sigmaC * Trad) / (1 + gamma * dloga * (2 + sigmaC)) - Tgas) / (gamma * dloga);
+			const auto T1 = Tgas + (1 - 2 * gamma) * dTgasdT1 * dloga;
+			const auto dTgasdT2 = ((T1 + gamma * dloga * sigmaC * Trad) / (1 + gamma * dloga * (2 + sigmaC)) - T1) / (gamma * dloga);
+			Tgas += 0.5 * (dTgasdT1 + dTgasdT2) * dloga;
 			chemistry_update(H, Hp, He, Hep, Hepp, ne, Tgas, a, 0.5 * dt);
 		}
 		const auto n = H + Hp + He + Hep + Hepp;
@@ -308,13 +312,13 @@ void zero_order_universe(double amin, double amax, std::function<double(double)>
 		}
 		sound_speed[i] = cs / clight;
 		thomson[i] = clight * sigma_T * ne / hubble;
-//		printf("%e %e %e %e %e %e\n", 1 / a - 1, Tgas, Trad, (Hp + Hep + 2 * Hepp) / (H + Hp + 2 * He + 2 * Hep + 2 * Hepp), thomson[i], sigmaC);
+		printf("%e %e %e %e %e %e\n", 1 / a - 1, Tgas, Trad, (Hp + Hep + 2 * Hepp) / (H + Hp + 2 * He + 2 * Hep + 2 * Hepp), thomson[i], sigmaC);
 		t += dt;
 		last_a = a;
 	}
 	csfunc = build_interpolation_function(sound_speed, amin, amax);
 	thomsonfunc = build_interpolation_function(thomson, amin, amax);
-//	abort();
+	abort();
 }
 
 void advance(state &U, double k, double a0, double a1, std::function<double(double)> cs, std::function<double(double)> thomson) {
@@ -342,7 +346,7 @@ void advance(state &U, double k, double a0, double a1, std::function<double(doub
 		};
 		compute_parameters(loga);
 		const auto lambda_max = std::max(std::max(std::max(1.0 + cs2 * eps, eps + 4.0 / etaaH), 0.5 * Om + 2.0 * Or), (1 + eps * eps / 3.0));
-		const auto dloga = std::min(3 / lambda_max, logamax - loga);
+		const auto dloga = std::min(4 / lambda_max, logamax - loga);
 
 		const auto dudt_exp = [&](state U) {
 			state dudt;
