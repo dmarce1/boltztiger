@@ -44,7 +44,7 @@ const double Yp = (1 - hefrac / 2.0);
 double Hubble(double a) {
 	return H0 * h * std::sqrt(omega_r / (a * a * a * a) + omega_m / (a * a * a) + omega_lambda);
 }
-#define LMAX 100
+#define LMAX 8
 
 #define Phii 0
 #define deltai 1
@@ -64,37 +64,8 @@ double rho_b(double a) {
 	using namespace constants;
 	return (3.0 * omega_b * H0cgs * H0cgs * h * h) / (8.0 * M_PI * G * a * a * a);
 }
-double chemical_potential(double ne, double T) {
-	using namespace constants;
-	const auto beta = kb * T / (me * clight * clight);
-	double eta = 0.0;
-	double deta = 1.0e-7;
-	double deta0;
-	int iter = 0;
-	double w = 1;
-	do {
-		const auto eta0 = eta - 0.5 * deta;
-		const auto eta1 = eta + 0.5 * deta;
-		const double f0 = ne - (compute_Nele(eta0, beta) - compute_Npos(eta0, beta));
-		const double f1 = ne - (compute_Nele(eta1, beta) - compute_Npos(eta1, beta));
-		const double dfdeta = (f1 - f0) / deta;
-		const double f = 0.5 * (f0 + f1);
-		deta0 = -f / dfdeta;
-		eta += w * deta0;
-		iter++;
-		if (iter > 500) {
-			printf("chem_pot : %e %e %e %e %e \n", ne, T, eta, deta0, w);
-		}
-		if (iter == 1000) {
-			printf("maximum iterations exceeded in chemical_potential\n");
-			abort();
-		}
-		w *= 0.99;
-	} while (std::abs(deta0) > 1.0e-6);
-	return eta;
-}
 
-void compute_chemistry(double rho, double T, double &H, double &Hp, double &He, double &Hep, double &Hepp, double &ne) {
+void saha(double rho, double T, double &H, double &Hp, double &He, double &Hep, double &Hepp, double &ne) {
 	using namespace constants;
 	constexpr auto evtoerg = 1.6021772e-12;
 	constexpr auto eps_1_H = 13.59844 * evtoerg;
@@ -143,101 +114,6 @@ void compute_chemistry(double rho, double T, double &H, double &Hp, double &He, 
 	Hepp = B0 * C0 * He0 / (B0 * C0 + B0 * ne + ne * ne);
 	He = He0 - Hep - Hepp;
 }
-
-double fermi_dirac(double k, double eta, double beta) {
-	if (eta < -5) {
-		return std::exp(eta) * gamma_real(1 + k);
-	} else {
-		const auto func = [k, eta, beta](double x) {
-			if (x != 0.0) {
-				double part1 = std::pow(x, k) * std::sqrt(1.0 + 0.5 * beta * x) / (std::exp(x - eta) + 1.0);
-				double part2 = std::pow(x, -k - 2) * std::sqrt(1.0 + 0.5 * beta / x) / (std::exp(1.0 / x - eta) + 1.0);
-				return part1 + part2;
-			} else {
-				return 0.0;
-			}
-		};
-		return integrate(func, 0.0, 1.0);
-	}
-}
-
-double compute_Nele(double eta, double beta) {
-	using namespace constants;
-	constexpr double c0 = 8.0 * M_PI * std::sqrt(2) * std::pow(me * clight / hplanck, 3);
-	double y = c0 * std::pow(beta, 1.5) * (fermi_dirac(0.5, eta, beta) + beta * fermi_dirac(1.5, eta, beta));
-	return y;
-}
-
-double compute_Npos(double eta, double beta) {
-	using namespace constants;
-	constexpr double c0 = 8.0 * M_PI * std::sqrt(2) * std::pow(me * clight / hplanck, 3);
-	double y = c0 * std::pow(beta, 1.5) * (fermi_dirac(0.5, -eta - 2.0 / beta, beta) + beta * fermi_dirac(1.5, -eta - 2.0 / beta, beta));
-	return y;
-}
-
-void electron_state(double ne, double T, double &P, double &E) {
-	using namespace constants;
-	const auto beta = kb * T / (me * clight * clight);
-	const auto eta = chemical_potential(ne, T);
-	constexpr double c0 = 8.0 * M_PI * std::sqrt(2) * std::pow(me * clight / hplanck, 3) * me * clight * clight;
-	const double F32ele = fermi_dirac(1.5, eta, beta);
-	const double F52ele = fermi_dirac(2.5, eta, beta);
-	const double F32pos = fermi_dirac(1.5, -eta - 2.0 / beta, beta);
-	const double F52pos = fermi_dirac(2.5, -eta - 2.0 / beta, beta);
-	const double Npos = compute_Npos(eta, beta);
-	const double Pele = (2.0 / 3.0) * c0 * std::pow(beta, 2.5) * (F32ele + 0.5 * beta * F52ele);
-	const double Ppos = (2.0 / 3.0) * c0 * std::pow(beta, 2.5) * (F32pos + 0.5 * beta * F52pos);
-	const double Eele = c0 * std::pow(beta, 2.5) * (F32ele + beta * F52ele);
-	const double Epos = c0 * std::pow(beta, 2.5) * (F32pos + beta * F52pos) + 2.0 * me * clight * clight * Npos;
-	P = Ppos + Pele;
-	E = Epos + Eele;
-
-}
-
-void pressure_and_energy(double rho, double T, double &P, double &eps) {
-	using namespace constants;
-	double H, Hp, He, Hep, Hepp, ne;
-	compute_chemistry(rho, T, H, Hp, He, Hep, Hepp, ne);
-//	printf("%e %e\n", ne, Ye);
-	const double N = H + Hp + He + Hep + Hepp;
-	double Pele, Eele, Pnuc, Enuc;
-	if (kb * T > 1.0e-2 * me * clight * clight && ne / (H + Hp + He + Hep + Hepp) > 1.0e-6) {
-		electron_state(ne, T, Pele, Eele);
-	} else {
-//		printf("Shortcut\n");
-		Pele = kb * ne * T;
-		Eele = 1.5 * Pele;
-	}
-	Pnuc = kb * N * T;
-	Enuc = 1.5 * Pnuc;
-	eps = (Eele + Enuc) / rho;
-	P = Pele + Pnuc;
-}
-
-void equation_of_state(double rho, double T, double &P, double &cs, double &eps) {
-	using namespace constants;
-	double Pp, Pn, epsp, epsn;
-	double dT = T * 1.0e-4;
-	double drho = rho * 1.0e-4;
-
-	pressure_and_energy(rho, T + 0.5 * dT, Pp, epsp);
-	pressure_and_energy(rho, T - 0.5 * dT, Pn, epsn);
-	pressure_and_energy(rho, T, P, eps);
-	const double dPdT = (Pp - Pn) / dT;
-	const double Cv = (epsp - epsn) / dT;
-	pressure_and_energy(rho + 0.5 * drho, T, Pp, epsp);
-	pressure_and_energy(rho - 0.5 * drho, T, Pn, epsn);
-	const double dPdrho = (Pp - Pn) / drho;
-	const double cs2 = (P / (Cv * rho * rho) * dPdT + dPdrho) / (P / rho + eps + clight * clight);
-	if (cs2 > 1) {
-		printf("%e\n", std::sqrt(cs2));
-	}
-	assert(cs2 >= 0.0);
-//	assert(cs2 < 1.0);
-	cs = clight * std::sqrt(cs2);
-
-}
-
 void chemical_rates(double &k1, double &k2, double &k3, double &k4, double &k5, double &k6, double T) {
 
 	const auto tev = T * 8.61732814974056E-05;
@@ -271,61 +147,67 @@ void chemical_rates(double &k1, double &k2, double &k3, double &k4, double &k5, 
 	k6 = 3.36e-10 / sqrt(T) / std::pow((T / 1.e3), 0.2) / (1. + std::pow((T / 1.e6), 0.7));
 }
 
-void chemistry_update(double &H, double &Hp, double &He, double &Hep, double &Hepp, double &ne, double T, double Trad, double hubble, double dt) {
-	const double H0 = H;
-	const double Hp0 = Hp;
-	const double He0 = He;
-	const double Hep0 = Hep;
-	const double Hepp0 = Hepp;
-	double K1, K2, K3, K4, K5, K6;
-	double J20, J21, J22;
-	chemical_rates(K1, K2, K3, K4, K5, K6, T);
-	photo_rates(J20, J21, J22, Trad);
-//	J20 = J21 = J22 = 0.0;
-	double nemax = (H0 + Hp0) + 2 * (He0 + Hep0 + Hepp0);
-	double nemin = 0.0;
-	double nemid;
-	double err = 0.0;
-	const auto compute_ne = [&](double ne) {
-		using namespace constants;
-		H = (H0 + dt * (H0 + Hp0) * K2 * ne) / (1 + dt * (J20 + (K1 + K2) * ne));
-		Hp = H0 + Hp0 - H;
-		const auto den = (-1 + Power(dt, 3) * J22 * (J21 + K3 * ne) * (J22 + (K5 - K6) * ne) - dt * (J21 + (K3 + K4 + K5 + K6) * ne)
-				+ Power(dt, 2) * (Power(J22, 2) + J22 * (K4 + K5 - K6) * ne - ne * (J21 * (K5 + K6) + K4 * K6 * ne + K3 * (K5 + K6) * ne)));
-		He = (He0 + dt * K4 * ne * (Hep0 + dt * (Hep0 + Hepp0) * K6 * ne) + dt * He0 * (J22 + ne * (K4 + K5 + K6 + dt * K4 * K6 * ne)))
-				/ (1
-						+ dt
-								* (J21 + J22 + dt * J22 * K3 * ne + dt * J21 * (J22 + (K5 + K6) * ne)
-										+ ne * (K3 + K4 + K5 + K6 + dt * (K3 * K5 + (K3 + K4) * K6) * ne)));
-		Hep = (Hep0 + dt * He0 * J21 + dt * Hep0 * J21 + dt * ((He0 + Hep0) * K3 + (Hep0 + Hepp0 + dt * (He0 + Hep0 + Hepp0) * J21) * K6) * ne +
-		Power(dt, 2) * (He0 + Hep0 + Hepp0) * K3 * K6 * Power(ne, 2))
-				/ (1
-						+ dt
-								* (J21 + J22 + dt * J22 * K3 * ne + dt * J21 * (J22 + (K5 + K6) * ne)
-										+ ne * (K3 + K4 + K5 + K6 + dt * (K3 * K5 + (K3 + K4) * K6) * ne)));
-		Hepp = He0 + Hep0 + Hepp0 - He - Hep;
-		return Hp + Hep + 2 * Hepp;
-	};
-	do {
-		nemid = (nemax + nemin) / 2.0;
-		double t1 = nemid - compute_ne(nemid);
-		double t2 = nemax - compute_ne(nemax);
-		if (t1 * t2 < 0.0) {
-			nemin = nemid;
-		} else {
-			nemax = nemid;
-		}
-		err = 1.0 - nemin / nemax;
-	} while (err > 1.0e-10 && nemid > 1e-100);
-	ne = nemid;
+#define Sqrt(a) std::sqrt(a)
+
+void chemistry_update(double &H, double &Hp, double &He, double &Hep, double &Hepp, double &ne, double T, double a, double dt) {
+	bool use_saha;
+	double H1 = H;
+	double Hp1 = Hp;
+	double He1 = He;
+	double Hep1 = Hep;
+	double Hepp1 = Hepp;
+	double ne1 = ne;
+	double H0 = H;
+	double Hp0 = Hp;
+	double He0 = He;
+	double Hep0 = Hep;
+	double Hepp0 = Hepp;
+	double ne0 = ne;
 	using namespace constants;
-	constexpr auto evtoerg = 1.6021772e-12;
-	constexpr auto eps_1_H = 13.59844 * evtoerg;
-	constexpr auto g0_H = 2.0;
-	constexpr auto g1_H = 1.0;
-	const auto lambda3 = std::pow(hplanck * hplanck / (2 * me * kb * T), 1.5);
-	const auto A0 = 2.0 / lambda3 * std::exp(-eps_1_H / (kb * T)) * g1_H / g0_H;
-//	printf("%e %e %e %e\n", T, A0, J20 / K2, A0 / (J20/K2));
+	double rho = ((H + Hp) + (He + Hep + Hepp) * 4) * mh;
+	if (ne > (H + Hp)) {
+		saha(rho, T, H1, Hp1, He1, Hep1, Hepp1, ne1);
+		if (ne1 > (H1 + Hp1)) {
+			use_saha = true;
+		} else {
+			use_saha = false;
+		}
+		use_saha = true;
+	} else {
+		use_saha = false;
+	}
+	if (use_saha) {
+		H = H1;
+		Hp = Hp1;
+		He = He1;
+		Hep = Hep1;
+		Hepp = Hepp1;
+		ne = ne1;
+	} else {
+		double nH = H + Hp;
+		double hubble = Hubble(a) * H0cgs / H0;
+		using namespace constants;
+		const auto B1 = 13.6 * evtoerg;
+		const auto phi2 = std::max(0.448 * std::log(B1 / (kb * T)), 0.0);
+		const auto alpha2 = 64.0 * M_PI / std::sqrt(27.0 * M_PI) * B1 * 2.0 * std::pow(hbar, 2) / std::pow(me * clight, 3) / std::sqrt(kb * T / B1) * phi2;
+		const auto beta = std::pow((me * kb * T) / (2 * M_PI * hbar * hbar), 1.5) * std::exp(-B1 / (kb * T)) * alpha2;
+		const auto lambda_a = 8.0 * M_PI * hbar * clight / (3.0 * B1);
+		const auto num = hplanck * clight / lambda_a / kb / T;
+		const auto beta2 = beta * std::exp(std::min(num, 80.0));
+		const auto La = 8.0 * M_PI * hubble / (a * std::pow(lambda_a, 3) * nH);
+		const auto L2s = 8.227;
+		double x0 = Hp / nH;
+		const auto func = [=](double x) {
+			return x - (dt * (L2s + La / (1 - x)) * (1 - x) * (beta * (1 - x) - alpha2 * nH * Power(x, 2))) / (beta2 + L2s + La / (1 - x)) - x0;
+		};
+		double x = find_root(func);
+		He = He0 + Hep0 + Hepp0;
+		Hep = 0.0;
+		Hepp = 0.0;
+		H = (1.0 - x) * (H0 + Hp0);
+		Hp = x * (H0 + Hp0);
+		ne = Hp;
+	}
 }
 
 auto build_interpolation_function(const std::vector<double> values, double amin, double amax) {
@@ -363,7 +245,7 @@ void zero_order_universe(double amin, double amax, std::function<double(double)>
 	double minloga = std::log(amin);
 	double maxloga = std::log(amax);
 	double loga = minloga;
-	constexpr int N = 1024;
+	constexpr int N = 4096;
 	std::vector<double> sound_speed(N + 1), thomson(N + 1);
 	double dloga = (maxloga - minloga) / N;
 	double Trad = Theta * 2.73 / amin;
@@ -378,6 +260,7 @@ void zero_order_universe(double amin, double amax, std::function<double(double)>
 	Hepp = hefrac * rho0 / mh / 4;
 	ne = Hp + 2 * Hepp;
 	double last_a = amin;
+	double P0, rho, P, rho1, P1;
 	for (int i = 0; i <= N; i++) {
 		double loga = minloga + i * dloga;
 		double a = std::exp(loga);
@@ -389,32 +272,38 @@ void zero_order_universe(double amin, double amax, std::function<double(double)>
 		Hep *= fac;
 		Hepp *= fac;
 		ne *= fac;
-		double rho = rho_b(a);
+		rho0 = rho1;
+		P0 = P1;
+		rho1 = rho;
+		P1 = P;
+		rho = rho_b(a);
 		Trad = Theta * 2.73 / a;
 		const auto a3 = a * a * a;
 		const auto dt = dloga / hubble;
-		chemistry_update(H, Hp, He, Hep, Hepp, ne, Tgas, Trad, hubble, dt);
+		chemistry_update(H, Hp, He, Hep, Hepp, ne, Tgas, a, dt);
 		const auto n = H + Hp + He + Hep + Hepp;
 		const auto Y = ne / (H + Hp + 2 * (He + Hep + Hepp));
 		const auto Cv = 1.5 * kb * (n + ne);
-		const auto P = kb * (n + ne) * Tgas;
-		const auto Pele = kb * ne * Tgas;
-		const auto Pion = kb * n * Tgas;
-		double Pfermi, cs, eps;
-		equation_of_state(rho, Tgas, Pfermi, cs, eps);
+		P = kb * (n + ne) * Tgas;
 		const auto Comp = 5.64e-36 * std::pow(1 / (a * Trad), 4) * ne;
 		const auto sigma_T = 6.65e-25;
 		const auto c0 = Comp / (Cv * hubble);
-//		printf("%10.2e %10.2e %10.2e %10.2e %10.2e %10.2e %10.2e  %10.2e  %10.2e  \n", t, a, 1 / a - 1, ne / n, H / n, Hp / n, He / n, Hep / n, Hepp / n);
+		double cs;
 		if (i > 0) {
 			Tgas = (Tgas + dloga * c0 * std::pow(Trad, 5)) / (1 + dloga * (2 + c0 * std::pow(Trad, 4)));
 		}
+		if (i > 1 && i <= N) {
+			sound_speed[i - 1] = std::sqrt((P - P0) / (rho - rho0)) / clight;
+		} else if (i == 1) {
+			sound_speed[0] = std::sqrt((P - P1) / (rho - rho1)) / clight;
+		}
+		if (i == N) {
+			sound_speed[N - 1] = std::sqrt((P - P1) / (rho - rho1)) / clight;
+		}
 		sound_speed[i] = cs / clight;
 		thomson[i] = clight * sigma_T * ne / hubble;
-//		printf("%10.2e %10.2e %10.2e %10.2e %10.2e %10.2e %10.2e %10.2e %10.2e %10.2e  \n", t, a, 1 / a - 1, rho, n, Trad, Tgas, cs / clight, ne / n,
-//				clight * sigma_T * ne / hubble);
+//		printf("%e %e %e %e\n", 1 / a - 1, Tgas, (Hp + Hep + 2 * Hepp) / (H + Hp + 2 * He + 2 * Hep + 2 * Hepp), thomson[i]);
 		t += dt;
-		//	t += dloga / hubble;
 		last_a = a;
 	}
 	csfunc = build_interpolation_function(sound_speed, amin, amax);
@@ -518,9 +407,9 @@ void advance(state &U, double k, double a0, double a1, std::function<double(doub
 					dudt[Ni + 1] = (N1 - N10) / dloga;
 					dudt[Ni + 2] = (N2 - N20) / dloga;
 					for (int l = 3; l < LMAX; l++) {
-						dudt[Thetai + l] = -sigma  / (1 + sigma * dloga) * U[Thetai + l];
+						dudt[Thetai + l] = -sigma / (1 + sigma * dloga) * U[Thetai + l];
 						dudt[ThetaPi + l] = -sigma / (1 + sigma * dloga) * U[ThetaPi + l];
-						dudt[Ni + l] = -sigma  / (1 + sigma * dloga) * U[Ni + l];
+						dudt[Ni + l] = -sigma / (1 + sigma * dloga) * U[Ni + l];
 					}
 					return dudt;
 				};
@@ -600,7 +489,7 @@ void initial_conditions(state &u, double k, double a) {
 int main() {
 	std::array<std::array<double, 3>, 3> A = { { { -1, -2, -3 }, { 4, 5, 6 }, { 7, 8, 0 } } };
 //	compute_eigenvalues<3>(A)
-	//	printf("%e\n", matrix_determinant<3>(A));
+//	printf("%e\n", matrix_determinant<3>(A));
 
 //	const auto f = [](cmplx x) {
 //		return (x + 1.0) * (x + 1.0) * x;
@@ -614,7 +503,7 @@ int main() {
 	double amin = 1e-8;
 	double amax = 1.0;
 	std::function<double(double)> cs, thomson;
-	zero_order_universe(amin, amax, cs, thomson);
+	zero_order_universe(amin / 1.1, amax * 1.1, cs, thomson);
 	for (double k = 1e-4; k <= 0.5; k *= 1.1) {
 		state u;
 		initial_conditions(u, k, amin);
