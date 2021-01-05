@@ -252,7 +252,7 @@ void zero_order_universe(double amin, double amax, std::function<double(double)>
 	double minloga = std::log(amin);
 	double maxloga = std::log(amax);
 	double loga = minloga;
-	constexpr int N = 4096;
+	constexpr int N = 10000;
 	std::vector<double> sound_speed(N + 1), thomson(N + 1);
 	double dloga = (maxloga - minloga) / N;
 	double Trad = Theta * 2.73 / amin;
@@ -285,20 +285,19 @@ void zero_order_universe(double amin, double amax, std::function<double(double)>
 		P1 = P;
 		rho = rho_b(a);
 		Trad = Theta * 2.73 / a;
-		const auto a3 = a * a * a;
 		const auto dt = dloga / hubble;
-		chemistry_update(H, Hp, He, Hep, Hepp, ne, Tgas, a, dt);
-		const auto n = H + Hp + He + Hep + Hepp;
-		const auto Y = ne / (H + Hp + 2 * (He + Hep + Hepp));
-		const auto Cv = 1.5 * kb * (n + ne);
-		P = kb * (n + ne) * Tgas;
-		const auto Comp = 5.64e-36 * std::pow(1 / (a * Trad), 4) * ne;
-		const auto sigma_T = 6.65e-25;
-		const auto c0 = Comp / (Cv * hubble);
 		double cs;
+		const auto sigma_T = 6.65e-25;
+		double sigmaC;
 		if (i > 0) {
-			Tgas = (Tgas + dloga * c0 * std::pow(Trad, 5)) / (1 + dloga * (2 + c0 * std::pow(Trad, 4)));
+			chemistry_update(H, Hp, He, Hep, Hepp, ne, Tgas, a, 0.5 * dt);
+			const auto mu = (H + Hp + 4 * He + 4 * Hep + 4 * Hepp) * mh / (H + Hp + He + Hep + Hepp + ne);
+			sigmaC = mu / me * clight * (8.0 / 3.0) * omega_gam / (a * omega_m) * sigma_T * ne / hubble;
+			Tgas = (Tgas+ dloga*sigmaC*Trad)/(1 + dloga*(2 + sigmaC));
+			chemistry_update(H, Hp, He, Hep, Hepp, ne, Tgas, a, 0.5 * dt);
 		}
+		const auto n = H + Hp + He + Hep + Hepp;
+		P = kb * (n + ne) * Tgas;
 		if (i > 1 && i <= N) {
 			sound_speed[i - 1] = std::sqrt((P - P0) / (rho - rho0)) / clight;
 		} else if (i == 1) {
@@ -309,13 +308,13 @@ void zero_order_universe(double amin, double amax, std::function<double(double)>
 		}
 		sound_speed[i] = cs / clight;
 		thomson[i] = clight * sigma_T * ne / hubble;
-		printf("%e %e %e %e\n", 1 / a - 1, Tgas, (Hp + Hep + 2 * Hepp) / (H + Hp + 2 * He + 2 * Hep + 2 * Hepp), thomson[i]);
+//		printf("%e %e %e %e %e %e\n", 1 / a - 1, Tgas, Trad, (Hp + Hep + 2 * Hepp) / (H + Hp + 2 * He + 2 * Hep + 2 * Hepp), thomson[i], sigmaC);
 		t += dt;
 		last_a = a;
 	}
 	csfunc = build_interpolation_function(sound_speed, amin, amax);
 	thomsonfunc = build_interpolation_function(thomson, amin, amax);
-	abort();
+//	abort();
 }
 
 void advance(state &U, double k, double a0, double a1, std::function<double(double)> cs, std::function<double(double)> thomson) {
