@@ -501,55 +501,68 @@ void initial_conditions(state &u, double k, double a) {
 	}
 }
 
-double advance2(double &hg, double &eta, double &dc, double &dr, double &vr, double k, double amin, double amax) {
+double advance2(double &hdot, double &deltac, double &deltagam, double &thetagam, double k, double amin, double amax) {
 	auto loga = std::log(amin);
 	const auto logamax = std::log(amax);
-	hg = 1.0;
 	const double eps = k / (amin * Hubble(amin));
 	const double C = 1.0 * std::pow(eps, -1.5);
-	double hdot;
-	eta = 2.0 * C - C / 18.0 * eps * eps;
-	hg = C * eps * eps;
-	dr = -2.0 / 3.0 * C * eps * eps;
-	dc = 3.0 / 4.0 * dr;
-	vr = -C / 18.0 * eps * eps * eps * eps * amin * Hubble(amin);
+	double eta = 2.0 * C - C / 18.0 * eps * eps;
+	double hg = C * eps * eps;
+	deltagam = -2.0 / 3.0 * C * eps * eps;
+	deltac = 3.0 / 4.0 * deltagam;
+	thetagam = -C / 18.0 * eps * eps * eps * eps * amin * Hubble(amin);
 	double a = std::exp(loga);
 	double hubble = Hubble(a);
 	double Or = omega_r / (omega_r + a * omega_m + (a * a * a * a) * (1.0 - omega_m - omega_r));
 	double Om = omega_m / (omega_r / a + omega_m + (a * a * a) * (1.0 - omega_m - omega_r));
-	hdot = 2.0 * eps * eps * eta + 3.0 * (Om * dc + Or * dr);
+	double Ogam = omega_gam * Or / omega_r;
+	double Onu = omega_nu * Or / omega_r;
+	double Ob = omega_b * Om / omega_m;
+	double Oc = omega_c * Om / omega_m;
+	double tau = 1.0 / (amin*hubble);
+	hdot = (2.0 * eps * eps * eta + 3.0 * (Oc * deltac + Ogam * deltagam))*tau;
 	while (loga < logamax) {
 		double a = std::exp(loga);
 		double hubble = Hubble(a);
 		double eps = k / (a * hubble);
-		double Or = omega_r / (omega_r + a * omega_m + (a * a * a * a) * (1.0 - omega_m - omega_r));
-		double Om = omega_m / (omega_r / a + omega_m + (a * a * a) * (1.0 - omega_m - omega_r));
-		double lambda_max = std::max(0.5 * std::sqrt(1 + 6 * Om + 16 * Or), eps / sqrt(3));
+		Or = omega_r / (omega_r + a * omega_m + (a * a * a * a) * (1.0 - omega_m - omega_r));
+		Om = omega_m / (omega_r / a + omega_m + (a * a * a) * (1.0 - omega_m - omega_r));
+		Ogam = omega_gam * Or / omega_r;
+		Onu = omega_nu * Or / omega_r;
+		Ob = omega_b * Om / omega_m;
+		Oc = omega_c * Om / omega_m;
+
+		double lambda_max = std::max(0.5 * std::sqrt(1 + 6 * Oc + 16 * Ogam), eps / sqrt(3));
 		double dloga = 1.0e-1 / lambda_max;
 		double hdot0 = hdot;
-		double dc0 = dc;
-		double dr0 = dr;
-		double vr0 = vr;
+		double deltac0 = deltac;
+		double deltagam0 = deltagam;
+		double thetagam0 = thetagam;
 		double beta[3] = { 1, 0.25, (2.0 / 3.0) };
 		double tm[3] = { 0, 1, 0.5 };
 		double loga0 = loga;
+		double tau0 = tau;
 		for (int i = 0; i < 3; i++) {
-			printf("%e %e\n", a, dc);
 			loga = loga0 + tm[i] * dloga;
 			a = std::exp(loga);
 			hubble = Hubble(a);
 			eps = k / (a * hubble);
 			Or = omega_r / (omega_r + a * omega_m + (a * a * a * a) * (1.0 - omega_m - omega_r));
 			Om = omega_m / (omega_r / a + omega_m + (a * a * a) * (1.0 - omega_m - omega_r));
-			double dhdot = -hdot - (3.0 * Om * dc + 6.0 * Or * dr);
-			;
-			double ddcdtau = -0.5 * hdot;
-			double ddrdtau = -4.0 / 3.0 * vr / (a * hubble) - (2.0 / 3.0) * hdot;
-			double dvrdtau = eps * eps * 0.25 * dr * a * hubble;
+			Ogam = omega_gam * Or / omega_r;
+			Onu = omega_nu * Or / omega_r;
+			Ob = omega_b * Om / omega_m;
+			Oc = omega_c * Om / omega_m;
+			double dtau = 1.0 / (a*hubble);
+			double dhdot = - (3.0 * Oc * deltac + 6.0 * Ogam * deltagam) * tau;
+			double ddeltac = -0.5 * hdot/tau;
+			double ddeltagam = -4.0 / 3.0 * thetagam / (a * hubble) - (2.0 / 3.0) * hdot/tau;
+			double dthetagam = eps * eps * 0.25 * deltagam * a * hubble;
+			tau = (1 - beta[i]) * tau0 + (tau + dtau * dloga) * beta[i];
 			hdot = (1 - beta[i]) * hdot0 + (hdot + dhdot * dloga) * beta[i];
-			dc = (1 - beta[i]) * dc0 + (dc + ddcdtau * dloga) * beta[i];
-			dr = (1 - beta[i]) * dr0 + (dr + ddrdtau * dloga) * beta[i];
-			vr = (1 - beta[i]) * vr0 + (vr + dvrdtau * dloga) * beta[i];
+			deltac = (1 - beta[i]) * deltac0 + (deltac + ddeltac * dloga) * beta[i];
+			deltagam = (1 - beta[i]) * deltagam0 + (deltagam + ddeltagam * dloga) * beta[i];
+			thetagam = (1 - beta[i]) * thetagam0 + (thetagam + dthetagam * dloga) * beta[i];
 		}
 		loga = loga0 + dloga;
 	}
@@ -619,7 +632,7 @@ double advance2(double &hg, double &eta, double &dc, double &dr, double &vr, dou
 //}
 
 int main() {
-	double h, eta, deltac, deltar, thetar;
+	double hdot,  deltac, deltar, thetar;
 
 //	advance2(h, eta, deltac, deltar, thetar, 1.0e-1, 1.0e-8, 1.0);
 //	compute_eigenvalues<3>(A)
@@ -638,13 +651,12 @@ int main() {
 	double amax = 1.0;
 	std::function<double(double)> cs, thomson;
 	zero_order_universe(amin / 1.1, amax * 1.1, cs, thomson);
-	for (double k = 1e-1; k <= 2.5; k *= 1.5) {
+	for (double k = 1e-4; k <= 2.5; k *= 1.5) {
 		state u;
 		initial_conditions(u, k, amin);
-		const auto phi = advance2(h, eta, deltac, deltar, thetar, k, 1.0e-9, 1.0);
-		return 0;
+		const auto phi = advance2(hdot, deltac, deltar, thetar, k, 1.0e-9, 1.0);
 		//	break;
-		printf("%e %e %e\n", k, eta * eta, deltac * deltac);
+		printf("%e %e\n", k, deltac * deltac);
 	}
 //	using namespace constants;
 //	double Tgas = 1e6;
