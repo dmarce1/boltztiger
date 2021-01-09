@@ -653,21 +653,21 @@ double advance2(cos_state &U, double k, double amin, double amax, std::function<
 		double G20 = G2;
 		double sigma = thomsonfunc(std::log(a));
 #define Rule(a, b) a = b
-//		Rule(thetab,
-//				-((-3 * Ob * thetab0 - 3 * dloga * Ob * sigma * thetab0 - 4 * dloga * Ogam * sigma * thetagam0)
-//						/ (3 * Ob + 3 * dloga * Ob * sigma + 4 * dloga * Ogam * sigma)));
-//		Rule(thetagam,
-//				-((-3 * dloga * Ob * sigma * thetab0 - 3 * Ob * thetagam0 - 4 * dloga * Ogam * sigma * thetagam0)
-//						/ (3 * Ob + 3 * dloga * Ob * sigma + 4 * dloga * Ogam * sigma)));
-//		Rule(F2, -((-10 * F20 - 4 * dloga * F20 * sigma - dloga * G00 * sigma - dloga * G20 * sigma) / ((1 + dloga * sigma) * (10 + 3 * dloga * sigma))));
-//		Rule(G0,
-//				-((-10 * G00 - 5 * dloga * F20 * sigma - 8 * dloga * G00 * sigma - 5 * dloga * G20 * sigma) / ((1 + dloga * sigma) * (10 + 3 * dloga * sigma))));
-//		Rule(G1, G10 / (1 + dloga * sigma));
-//		Rule(G2, -((-10 * G20 - dloga * F20 * sigma - dloga * G00 * sigma - 4 * dloga * G20 * sigma) / ((1 + dloga * sigma) * (10 + 3 * dloga * sigma))));
-//		for (int l = 3; l < LMAX; l++) {
-//			U[GLi + l] /= (1 + dloga * sigma);
-//			U[FLi + l] /= (1 + dloga * sigma);
-//		}
+		Rule(thetab,
+				-((-3 * Ob * thetab0 - 3 * dloga * Ob * sigma * thetab0 - 4 * dloga * Ogam * sigma * thetagam0)
+						/ (3 * Ob + 3 * dloga * Ob * sigma + 4 * dloga * Ogam * sigma)));
+		Rule(thetagam,
+				-((-3 * dloga * Ob * sigma * thetab0 - 3 * Ob * thetagam0 - 4 * dloga * Ogam * sigma * thetagam0)
+						/ (3 * Ob + 3 * dloga * Ob * sigma + 4 * dloga * Ogam * sigma)));
+		Rule(F2, -((-10 * F20 - 4 * dloga * F20 * sigma - dloga * G00 * sigma - dloga * G20 * sigma) / ((1 + dloga * sigma) * (10 + 3 * dloga * sigma))));
+		Rule(G0,
+				-((-10 * G00 - 5 * dloga * F20 * sigma - 8 * dloga * G00 * sigma - 5 * dloga * G20 * sigma) / ((1 + dloga * sigma) * (10 + 3 * dloga * sigma))));
+		Rule(G1, G10 / (1 + dloga * sigma));
+		Rule(G2, -((-10 * G20 - dloga * F20 * sigma - dloga * G00 * sigma - 4 * dloga * G20 * sigma) / ((1 + dloga * sigma) * (10 + 3 * dloga * sigma))));
+		for (int l = 3; l < LMAX; l++) {
+			U[GLi + l] /= (1 + dloga * sigma);
+			U[FLi + l] /= (1 + dloga * sigma);
+		}
 	}
 	return 0;
 }
