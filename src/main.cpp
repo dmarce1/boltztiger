@@ -506,11 +506,8 @@ double advance2(double &hdot, double &deltac, double &deltagam, double &thetagam
 	const auto logamax = std::log(amax);
 	const double eps = k / (amin * Hubble(amin));
 	const double C = 1.0 * std::pow(eps, -1.5);
-	double eta = 2.0 * C - C / 18.0 * eps * eps;
 	double hg = C * eps * eps;
-	deltagam = -2.0 / 3.0 * C * eps * eps;
-	deltac = 3.0 / 4.0 * deltagam;
-	thetagam = -C / 18.0 * eps * eps * eps * eps * amin * Hubble(amin);
+	double F2, deltanu, thetanu, N2, G0, G1, G2, deltab, thetab;
 	double a = std::exp(loga);
 	double hubble = Hubble(a);
 	double Or = omega_r / (omega_r + a * omega_m + (a * a * a * a) * (1.0 - omega_m - omega_r));
@@ -519,8 +516,17 @@ double advance2(double &hdot, double &deltac, double &deltagam, double &thetagam
 	double Onu = omega_nu * Or / omega_r;
 	double Ob = omega_b * Om / omega_m;
 	double Oc = omega_c * Om / omega_m;
-	double tau = 1.0 / (amin*hubble);
-	hdot = (2.0 * eps * eps * eta + 3.0 * (Oc * deltac + Ogam * deltagam))*tau;
+	double tau = 1.0 / (amin * hubble);
+	double Rnu = Onu / Or;
+	double eta = 2.0 * C - C * (5 + 4 * Rnu) / (6 * (15 + 4 * Rnu)) * eps * eps;
+	deltanu = deltagam = -2.0 / 3.0 * C * eps * eps;
+	deltab = deltac = 3.0 / 4.0 * deltagam;
+	thetab = thetagam = -C / 18.0 * eps * eps * eps * eps * amin * Hubble(amin);
+	thetab *= tau;
+	thetanu = (23 + 4 * Rnu) / (15 + 4 * Rnu) * thetagam;
+	N2 = 0.5 * (4.0 * C) / (3.0 * (15 + 4 * Rnu)) * eps * eps;
+	hdot = (2.0 * eps * eps * eta + 3.0 * (Oc * deltac + Ob * deltab + Ogam * deltagam + Onu * deltanu)) * tau;
+	G0 = G1 = G2 = F2 = 0.0;
 	while (loga < logamax) {
 		double a = std::exp(loga);
 		double hubble = Hubble(a);
@@ -531,13 +537,21 @@ double advance2(double &hdot, double &deltac, double &deltagam, double &thetagam
 		Onu = omega_nu * Or / omega_r;
 		Ob = omega_b * Om / omega_m;
 		Oc = omega_c * Om / omega_m;
-
-		double lambda_max = std::max(0.5 * std::sqrt(1 + 6 * Oc + 16 * Ogam), eps / sqrt(3));
+		double lambda_max = std::max(0.5 * std::sqrt(1 + 6 * Oc + 16 * Ogam), eps);
 		double dloga = 1.0e-1 / lambda_max;
 		double hdot0 = hdot;
 		double deltac0 = deltac;
 		double deltagam0 = deltagam;
 		double thetagam0 = thetagam;
+		double deltanu0 = deltanu;
+		double thetanu0 = thetanu;
+		double deltab0 = deltab;
+		double thetab0 = thetab;
+		double F20 = F2;
+		double N20 = N2;
+		double G00 = G0;
+		double G10 = G1;
+		double G20 = G2;
 		double beta[3] = { 1, 0.25, (2.0 / 3.0) };
 		double tm[3] = { 0, 1, 0.5 };
 		double loga0 = loga;
@@ -553,16 +567,24 @@ double advance2(double &hdot, double &deltac, double &deltagam, double &thetagam
 			Onu = omega_nu * Or / omega_r;
 			Ob = omega_b * Om / omega_m;
 			Oc = omega_c * Om / omega_m;
-			double dtau = 1.0 / (a*hubble);
-			double dhdot = - (3.0 * Oc * deltac + 6.0 * Ogam * deltagam) * tau;
-			double ddeltac = -0.5 * hdot/tau;
-			double ddeltagam = -4.0 / 3.0 * thetagam / (a * hubble) - (2.0 / 3.0) * hdot/tau;
+			double dtau = 1.0 / (a * hubble);
+			double dhdot = -(3.0 * (Oc * deltac + Ob * deltab) + 6.0 * (Ogam * deltagam + Onu * deltanu)) * tau;
+			double ddeltac = -0.5 * hdot / tau;
+			double ddeltab = -thetab / tau - 0.5 * hdot / tau;
+			double dthetab = 0.0;
+			double ddeltagam = -4.0 / 3.0 * thetagam / (a * hubble) - (2.0 / 3.0) * hdot / tau;
 			double dthetagam = eps * eps * 0.25 * deltagam * a * hubble;
+			double ddeltanu = -4.0 / 3.0 * thetanu / (a * hubble) - (2.0 / 3.0) * hdot / tau;
+			double dthetanu = eps * eps * 0.25 * deltanu * a * hubble;
 			tau = (1 - beta[i]) * tau0 + (tau + dtau * dloga) * beta[i];
 			hdot = (1 - beta[i]) * hdot0 + (hdot + dhdot * dloga) * beta[i];
 			deltac = (1 - beta[i]) * deltac0 + (deltac + ddeltac * dloga) * beta[i];
+			deltab = (1 - beta[i]) * deltab0 + (deltab + ddeltab * dloga) * beta[i];
+			thetab = (1 - beta[i]) * thetab0 + (thetab + dthetab * dloga) * beta[i];
 			deltagam = (1 - beta[i]) * deltagam0 + (deltagam + ddeltagam * dloga) * beta[i];
 			thetagam = (1 - beta[i]) * thetagam0 + (thetagam + dthetagam * dloga) * beta[i];
+			deltanu = (1 - beta[i]) * deltanu0 + (deltanu + ddeltanu * dloga) * beta[i];
+			thetanu = (1 - beta[i]) * thetanu0 + (thetanu + dthetanu * dloga) * beta[i];
 		}
 		loga = loga0 + dloga;
 	}
@@ -632,7 +654,7 @@ double advance2(double &hdot, double &deltac, double &deltagam, double &thetagam
 //}
 
 int main() {
-	double hdot,  deltac, deltar, thetar;
+	double hdot, deltac, deltar, thetar;
 
 //	advance2(h, eta, deltac, deltar, thetar, 1.0e-1, 1.0e-8, 1.0);
 //	compute_eigenvalues<3>(A)
